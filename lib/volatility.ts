@@ -68,3 +68,14 @@ export function historicalVolatility(
 
   return Math.sqrt(variance) * Math.sqrt(252);
 }
+
+/**
+ * Percentile rank (0-100) of `value` within `historical` -- the % of
+ * historical readings at or below the current value. Used for IV Rank
+ * once enough iv_history exists for a ticker.
+ */
+export function percentileRank(value: number, historical: number[]): number | null {
+  if (historical.length === 0) return null;
+  const atOrBelow = historical.filter((v) => v <= value).length;
+  return (atOrBelow / historical.length) * 100;
+}

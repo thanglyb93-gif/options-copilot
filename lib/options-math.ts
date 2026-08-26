@@ -142,3 +142,23 @@ export function annualizedReturn(
   if (capitalAtRisk <= 0 || dte <= 0) return 0;
   return (premium / capitalAtRisk) * (365 / dte);
 }
+
+/**
+ * Index of the expiration whose DTE is closest to `target` (default 37,
+ * the midpoint of the 30-45 DTE band this app screens for). Used to pick
+ * a sensible default expiration instead of always the nearest calendar
+ * date, which for weeklies is often a near-expiry contract with no real
+ * market.
+ */
+export function findClosestDteIndex(dtes: number[], target = 37): number {
+  let bestIndex = 0;
+  let bestDiff = Infinity;
+  dtes.forEach((dte, i) => {
+    const diff = Math.abs(dte - target);
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      bestIndex = i;
+    }
+  });
+  return bestIndex;
+}

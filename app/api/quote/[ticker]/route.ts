@@ -5,6 +5,7 @@ import {
   fetchHistoricalCloses,
   simpleMovingAverage,
 } from "@/lib/yahoo";
+import { historicalVolatility } from "@/lib/volatility";
 
 export async function GET(
   _request: Request,
@@ -29,6 +30,8 @@ export async function GET(
     return NextResponse.json({
       ticker,
       price,
+      dayChange: quote.regularMarketChange ?? null,
+      dayChangePercent: quote.regularMarketChangePercent ?? null,
       fiftyTwoWeekHigh,
       fiftyTwoWeekLow: quote.fiftyTwoWeekLow ?? null,
       percentFrom52wHigh,
@@ -42,6 +45,7 @@ export async function GET(
       sma20: simpleMovingAverage(closes, 20),
       sma50: simpleMovingAverage(closes, 50),
       sma200: simpleMovingAverage(closes, 200),
+      hv30: historicalVolatility(closes, 30),
       asOf: new Date().toISOString(),
     });
   } catch (error) {
