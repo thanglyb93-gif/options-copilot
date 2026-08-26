@@ -1,20 +1,22 @@
 /**
  * Hand-written typing for the Supabase schema defined in
- * supabase/migrations/0001_init.sql. Kept in sync manually until the schema
- * stabilizes enough to generate this via the Supabase CLI.
+ * supabase/migrations/0001_init.sql, shaped to match what the Supabase CLI
+ * would generate (Tables/Views/Functions, Relationships on each table) so
+ * it satisfies @supabase/postgrest-js's GenericSchema constraint. Kept in
+ * sync manually until the schema stabilizes enough to generate this.
  */
 
 export type PositionType = "covered_call" | "cash_secured_put";
 
 export type PositionStatus = "open" | "closed" | "assigned" | "expired";
 
-export interface WatchlistRow {
+export type WatchlistRow = {
   id: string;
   ticker: string;
   added_at: string;
-}
+};
 
-export interface PositionRow {
+export type PositionRow = {
   id: string;
   ticker: string;
   position_type: PositionType;
@@ -27,15 +29,15 @@ export interface PositionRow {
   status: PositionStatus;
   opened_at: string;
   closed_at: string | null;
-}
+};
 
-export interface IvHistoryRow {
+export type IvHistoryRow = {
   id: string;
   ticker: string;
   date: string;
   implied_volatility_avg: number | null;
   trailing_30d_hv: number | null;
-}
+};
 
 export interface Database {
   public: {
@@ -45,6 +47,7 @@ export interface Database {
         Insert: Partial<Pick<WatchlistRow, "id" | "added_at">> &
           Pick<WatchlistRow, "ticker">;
         Update: Partial<WatchlistRow>;
+        Relationships: [];
       };
       positions: {
         Row: PositionRow;
@@ -69,6 +72,7 @@ export interface Database {
             | "contracts"
           >;
         Update: Partial<PositionRow>;
+        Relationships: [];
       };
       iv_history: {
         Row: IvHistoryRow;
@@ -80,7 +84,14 @@ export interface Database {
         > &
           Pick<IvHistoryRow, "ticker" | "date">;
         Update: Partial<IvHistoryRow>;
+        Relationships: [];
       };
+    };
+    Views: {
+      [_ in never]: never;
+    };
+    Functions: {
+      [_ in never]: never;
     };
   };
 }

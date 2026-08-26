@@ -1,0 +1,176 @@
+import YahooFinance from "yahoo-finance2";
+import type { Quote } from "yahoo-finance2/modules/quote";
+import type { Option, OptionsResult } from "yahoo-finance2/modules/options";
+
+type YahooFinanceClient = InstanceType<typeof YahooFinance>;
+
+let client: YahooFinanceClient | null = null;
+
+function getYahooClient(): YahooFinanceClient {
+  if (!client) {
+    // Yahoo's unofficial endpoints log warnings about schema drift; not
+    // actionable for this app, so keep them out of server logs.
+    client = new YahooFinance({ suppressNotices: ["yahooSurvey"] });
+  }
+  return client;
+}
+
+export async function fetchQuote(ticker: string): Promise<Quote> {
+  return getYahooClient().quote(ticker);
+}
+
+export interface AnalystTargets {
+  targetHigh?: number;
+  targetLow?: number;
+  targetMean?: number;
+  recommendationKey?: string;
+  numberOfAnalysts?: number;
+}
+
+export interface DividendCalendar {
+  exDividendDate?: Date;
+}
+
+export async function fetchQuoteSummaryExtras(ticker: string): Promise<{
+  analystTargets: AnalystTargets;
+  dividendCalendar: DividendCalendar;
+  beta?: number;
+}> {
+  const summary = await getYahooClient().quoteSummary(ticker, {
+    modules: ["financialData", "calendarEvents", "defaultKeyStatistics"],
+  });
+
+  return {
+    analystTargets: {
+      targetHigh: summary.financialData?.targetHighPrice,
+      targetLow: summary.financialData?.targetLowPrice,
+      targetMean: summary.financialData?.targetMeanPrice,
+      recommendationKey: summary.financialData?.recommendationKey,
+      numberOfAnalysts: summary.financialData?.numberOfAnalystOpinions,
+    },
+    // quote().beta is frequently absent on Yahoo's endpoint;
+    // defaultKeyStatistics.beta is the reliable source.
+    beta: summary.defaultKeyStatistics?.beta,
+    dividendCalendar: {
+      exDividendDate: summary.calendarEvents?.exDividendDate,
+    },
+  };
+}
+
+export interface DailyClose {
+  date: string; // ISO date
+  close: number;
+}
+
+/** Daily closes for the trailing `days` calendar days, oldest first. */
+export async function fetchHistoricalCloses(
+  ticker: string,
+  days: number
+): Promise<DailyClose[]> {
+  const period2 = new Date();
+  const period1 = new Date(period2.getTime() - days * 24 * 60 * 60 * 1000);
+
+  const result = await getYahooClient().chart(ticker, {
+    period1,
+    period2,
+    interval: "1d",
+  });
+
+  return result.quotes
+    .filter((q): q is typeof q & { close: number } => q.close != null)
+    .map((q) => ({
+      date: new Date(q.date).toISOString().slice(0, 10),
+      close: q.close,
+    }));
+}
+
+/** Simple moving average over the last `period` closes, or null if short. */
+export function simpleMovingAverage(
+  closes: DailyClose[],
+  period: number
+): number | null {
+  if (closes.length < period) return null;
+  const window = closes.slice(-period);
+  const sum = window.reduce((acc, c) => acc + c.close, 0);
+  return sum / period;
+}
+
+export interface ExpirationChain {
+  expirationDate: Date;
+  calls: Option["calls"];
+  puts: Option["puts"];
+}
+
+export interface OptionsChainResult {
+  underlyingSymbol: string;
+  underlyingPrice: number | undefined;
+  expirations: ExpirationChain[];
+}
+
+/**
+ * Fetches the options chain for every expiration within `maxDays` days.
+ * Yahoo's options() endpoint returns one expiration per call, so this
+ * makes one call to discover expirationDates + one per matching date.
+ */
+export async function fetchOptionsChainWithinDays(
+  ticker: string,
+  maxDays: number
+): Promise<OptionsChainResult> {
+  const yahooFinance = getYahooClient();
+  const base: OptionsResult = await yahooFinance.options(ticker);
+
+  const now = Date.now();
+  const cutoff = now + maxDays * 24 * 60 * 60 * 1000;
+  const datesInRange = base.expirationDates.filter(
+    (d) => d.getTime() >= now && d.getTime() <= cutoff
+  );
+
+  const perExpiration = await Promise.all(
+    datesInRange.map(async (date) => {
+      const result = await yahooFinance.options(ticker, { date });
+      const chain = result.options[0];
+      return {
+        expirationDate: chain?.expirationDate ?? date,
+        calls: chain?.calls ?? [],
+        puts: chain?.puts ?? [],
+      };
+    })
+  );
+
+  return {
+    underlyingSymbol: base.underlyingSymbol,
+    underlyingPrice: base.quote?.regularMarketPrice,
+    expirations: perExpiration,
+  };
+}
+
+export interface NearestExpirationChain {
+  underlyingPrice: number | undefined;
+  expirationDate: Date;
+  calls: Option["calls"];
+  puts: Option["puts"];
+}
+
+/**
+ * Fetches only the nearest expiration's chain (Yahoo's default when no
+ * `date` is passed) -- a single request, used where we don't need every
+ * expiration within a window (max pain, IV snapshot).
+ */
+export async function fetchNearestExpirationChain(
+  ticker: string
+): Promise<NearestExpirationChain> {
+  const result = await getYahooClient().options(ticker);
+  const chain = result.options[0];
+
+  return {
+    underlyingPrice: result.quote?.regularMarketPrice,
+    expirationDate: chain?.expirationDate ?? result.expirationDates[0],
+    calls: chain?.calls ?? [],
+    puts: chain?.puts ?? [],
+  };
+}
+
+export function daysToExpiration(expirationDate: Date): number {
+  const ms = expirationDate.getTime() - Date.now();
+  return Math.max(0, Math.round(ms / (24 * 60 * 60 * 1000)));
+}

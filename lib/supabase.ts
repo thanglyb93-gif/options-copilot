@@ -46,3 +46,13 @@ export function getSupabaseServiceClient(): SupabaseClient<Database> {
   }
   return serviceClient;
 }
+
+/**
+ * Server-side client for API routes. Uses the service role key now that
+ * we have a dedicated project (not shared with another app) -- bypasses
+ * RLS, which is appropriate for a single-user internal tool with no auth
+ * system yet.
+ */
+export function getSupabaseRouteClient(): SupabaseClient<Database> {
+  return getSupabaseServiceClient();
+}

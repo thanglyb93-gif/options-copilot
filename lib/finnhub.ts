@@ -17,6 +17,34 @@ export interface FinnhubQuote {
   t: number; // unix timestamp
 }
 
+export interface FinnhubEarningsEvent {
+  date: string;
+  epsActual: number | null;
+  epsEstimate: number | null;
+  hour: string;
+  quarter: number;
+  revenueActual: number | null;
+  revenueEstimate: number | null;
+  symbol: string;
+  year: number;
+}
+
+export interface FinnhubEarningsCalendarResponse {
+  earningsCalendar: FinnhubEarningsEvent[];
+}
+
+export interface FinnhubNewsItem {
+  category: string;
+  datetime: number; // unix seconds
+  headline: string;
+  id: number;
+  image: string;
+  related: string;
+  source: string;
+  summary: string;
+  url: string;
+}
+
 export class FinnhubClient {
   private readonly apiKey: string;
 
@@ -48,6 +76,26 @@ export class FinnhubClient {
 
   async getQuote(symbol: string): Promise<FinnhubQuote> {
     return this.request<FinnhubQuote>("/quote", { symbol });
+  }
+
+  async getEarningsCalendar(
+    symbol: string,
+    from: string,
+    to: string
+  ): Promise<FinnhubEarningsCalendarResponse> {
+    return this.request<FinnhubEarningsCalendarResponse>("/calendar/earnings", {
+      symbol,
+      from,
+      to,
+    });
+  }
+
+  async getCompanyNews(
+    symbol: string,
+    from: string,
+    to: string
+  ): Promise<FinnhubNewsItem[]> {
+    return this.request<FinnhubNewsItem[]>("/company-news", { symbol, from, to });
   }
 }
 
