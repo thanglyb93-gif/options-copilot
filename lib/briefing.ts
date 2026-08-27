@@ -69,7 +69,7 @@ You must also synthesize a directional lean for the stock over the coming weeks,
 - "neutral" if there is no clear signal either way, or the available sources are too thin to support a view
 Give a one-to-two sentence rationale grounded in the same sources as your bullets. Do not force a bullish or bearish call when the evidence is thin or conflicting -- "neutral" or "mixed" with an honest rationale is the correct answer in that case, not a guess.`;
 
-function formatHeadlines(headlines: BriefingHeadline[]): string {
+export function formatHeadlines(headlines: BriefingHeadline[]): string {
   if (headlines.length === 0) return "(none available)";
   return headlines
     .map(

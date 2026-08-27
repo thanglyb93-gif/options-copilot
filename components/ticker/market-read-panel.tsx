@@ -2,10 +2,19 @@
 
 import { useEffect, useState } from "react";
 import type { BriefingResponse } from "@/types/api";
+import type { FetchState } from "@/lib/use-json-fetch";
+import type { EarningsResponse } from "@/types/api";
 import { formatRelativeTime } from "@/lib/format";
+import { composeMarketRead } from "@/lib/market-read";
 import { SkeletonLines, ErrorNote } from "./section";
 
-export function BriefingPanel({ symbol }: { symbol: string }) {
+export function MarketReadPanel({
+  symbol,
+  earningsState,
+}: {
+  symbol: string;
+  earningsState: FetchState<EarningsResponse>;
+}) {
   const [data, setData] = useState<BriefingResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -34,8 +43,13 @@ export function BriefingPanel({ symbol }: { symbol: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [symbol]);
 
+  const composed =
+    data && earningsState.data ? composeMarketRead(data.content, earningsState.data) : null;
+
+  const stillLoading = loading || earningsState.loading;
+
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-3">
       <div className="flex items-center justify-between gap-3">
         {data && (
           <span className="text-xs text-muted">
@@ -52,24 +66,29 @@ export function BriefingPanel({ symbol }: { symbol: string }) {
         </button>
       </div>
 
-      {loading && <SkeletonLines count={4} />}
+      {stillLoading && <SkeletonLines count={4} />}
       {error && <ErrorNote message={error} />}
+      {earningsState.error && <ErrorNote message={earningsState.error} />}
 
-      {data && (
+      {composed && data && (
         <div className="flex flex-col gap-3">
-          <ul className="flex flex-col gap-3">
-            {data.content.bullets.map((bullet, i) => (
-              <li key={i} className="flex flex-col gap-1">
-                <div className="flex items-start gap-2">
-                  <span className="mt-0.5 shrink-0 rounded border border-border bg-background px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted">
-                    {bullet.source}
-                  </span>
-                  <p className="text-sm text-foreground">{bullet.fact}</p>
-                </div>
-                <p className="pl-1 text-sm text-muted">{bullet.impact}</p>
-              </li>
-            ))}
-          </ul>
+          <div className="flex items-start gap-2">
+            {composed.cooldownFlagged && (
+              <span
+                className="mt-0.5 shrink-0 rounded border border-red-500/40 bg-red-500/10 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-red-300"
+                title="Price has moved sharply over the last 10 trading days"
+              >
+                ⚠ cooldown
+              </span>
+            )}
+            <p className="text-sm leading-relaxed text-foreground">
+              {composed.sentences.join(" ")}
+            </p>
+          </div>
+
+          <p className="border-t border-border pt-3 text-sm font-semibold leading-relaxed text-foreground">
+            <span className="text-accent">Net read:</span> {composed.netRead}
+          </p>
 
           {data.content.macro && (
             <div className="rounded-md border border-border bg-background px-3 py-2">

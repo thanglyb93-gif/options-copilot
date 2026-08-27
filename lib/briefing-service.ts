@@ -9,7 +9,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Quote } from "yahoo-finance2/modules/quote";
 import type { Database } from "@/types/database";
 import { fetchQuote, fetchHistoricalCloses, simpleMovingAverage, type DailyClose } from "./yahoo";
-import { getFinnhubClient, fetchGeneralMarketNews } from "./finnhub";
+import { getFinnhubClient, fetchGeneralMarketNews, type FinnhubNewsItem } from "./finnhub";
 import { earningsCooldownFlag } from "./flags";
 import { describeTrend } from "./trend";
 import {
@@ -18,12 +18,18 @@ import {
   type BriefingContent,
   type BriefingInputs,
 } from "./briefing";
+import { generateMarketPulse, type MarketPulseInputs } from "./market-pulse";
 
 const EARNINGS_LOOKBACK_DAYS = 14;
 const EARNINGS_LOOKAHEAD_DAYS = 120;
 const NEWS_LOOKBACK_DAYS = 14;
 const MAX_HEADLINES_IN_PROMPT = 8;
 const CACHE_TTL_MS = 4 * 60 * 60 * 1000; // 4 hours
+
+const MARKET_PULSE_TICKER_KEY = "__MARKET__";
+const MARKET_PULSE_CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
+const MARKET_PULSE_HEADLINE_LIMIT = 50;
+const MAX_HEADLINES_IN_MARKET_PULSE_PROMPT = 20;
 
 function toIsoDate(date: Date): string {
   return date.toISOString().slice(0, 10);
@@ -146,31 +152,34 @@ export interface BriefingCacheResult {
 }
 
 /**
- * Returns a cached briefing if one exists, is fresh (<4h), and validates
- * against the current schema; otherwise generates, upserts, and returns a
- * fresh one. A cached row that predates a schema change (e.g. missing
- * directionalLean) fails validation and is treated as a miss.
+ * Shared cache-or-generate flow against the `briefings` table, keyed by
+ * `key` (a ticker for per-ticker briefings, or the fixed Market Pulse key).
+ * Returns a cached row if one exists, is fresh (<ttlMs), and validates
+ * against the current schema; otherwise calls `generate`, upserts, and
+ * returns the fresh result. A cached row that predates a schema change
+ * (e.g. missing directionalLean) fails validation and is treated as a miss.
  */
-export async function getOrGenerateBriefing(
+async function cacheOrGenerate(
   supabase: SupabaseClient<Database>,
-  ticker: string,
-  inputs: BriefingInputs,
-  forceRefresh = false
+  key: string,
+  ttlMs: number,
+  generate: () => Promise<BriefingContent>,
+  forceRefresh: boolean
 ): Promise<BriefingCacheResult> {
   if (!forceRefresh) {
     const { data: cached, error: cacheReadError } = await supabase
       .from("briefings")
       .select("*")
-      .eq("ticker", ticker)
+      .eq("ticker", key)
       .maybeSingle();
 
     if (cacheReadError) {
-      console.error(`Failed to read briefing cache for ${ticker}:`, cacheReadError.message);
+      console.error(`Failed to read briefing cache for ${key}:`, cacheReadError.message);
     }
 
     if (cached) {
       const age = Date.now() - new Date(cached.generated_at).getTime();
-      if (age < CACHE_TTL_MS) {
+      if (age < ttlMs) {
         try {
           const content = parseBriefingContent(cached.content);
           return { content, generatedAt: cached.generated_at, cached: true };
@@ -181,16 +190,68 @@ export async function getOrGenerateBriefing(
     }
   }
 
-  const content = await generateBriefing(inputs);
+  const content = await generate();
   const generatedAt = new Date().toISOString();
 
   const { error: upsertError } = await supabase
     .from("briefings")
-    .upsert({ ticker, content, generated_at: generatedAt }, { onConflict: "ticker" });
+    .upsert({ ticker: key, content, generated_at: generatedAt }, { onConflict: "ticker" });
 
   if (upsertError) {
-    console.error(`Failed to cache briefing for ${ticker}:`, upsertError.message);
+    console.error(`Failed to cache briefing for ${key}:`, upsertError.message);
   }
 
   return { content, generatedAt, cached: false };
+}
+
+export async function getOrGenerateBriefing(
+  supabase: SupabaseClient<Database>,
+  ticker: string,
+  inputs: BriefingInputs,
+  forceRefresh = false
+): Promise<BriefingCacheResult> {
+  return cacheOrGenerate(supabase, ticker, CACHE_TTL_MS, () => generateBriefing(inputs), forceRefresh);
+}
+
+export interface MarketPulseContext {
+  inputs: MarketPulseInputs;
+  /** Raw headlines for the page's headline list (up to MARKET_PULSE_HEADLINE_LIMIT, uncapped by the prompt's smaller cap). */
+  headlines: FinnhubNewsItem[];
+}
+
+/** Gathers general-market headlines for the daily Market Pulse briefing. */
+export async function gatherMarketPulseContext(): Promise<MarketPulseContext> {
+  const headlines = await fetchGeneralMarketNews(MARKET_PULSE_HEADLINE_LIMIT);
+
+  const inputs: MarketPulseInputs = {
+    asOf: new Date().toISOString(),
+    headlines: headlines.slice(0, MAX_HEADLINES_IN_MARKET_PULSE_PROMPT).map((n) => ({
+      headline: n.headline,
+      source: n.source,
+      summary: n.summary,
+      publishedAt: new Date(n.datetime * 1000).toISOString(),
+    })),
+  };
+
+  return { inputs, headlines };
+}
+
+/**
+ * Cache-or-generate for the single, fixed-key ("__MARKET__") daily Market
+ * Pulse briefing -- same table and TTL-based freshness check as per-ticker
+ * briefings, just a longer TTL (market-wide news moves less per-minute
+ * than single-stock news) and a fixed cache key instead of a ticker.
+ */
+export async function getOrGenerateMarketPulse(
+  supabase: SupabaseClient<Database>,
+  inputs: MarketPulseInputs,
+  forceRefresh = false
+): Promise<BriefingCacheResult> {
+  return cacheOrGenerate(
+    supabase,
+    MARKET_PULSE_TICKER_KEY,
+    MARKET_PULSE_CACHE_TTL_MS,
+    () => generateMarketPulse(inputs),
+    forceRefresh
+  );
 }

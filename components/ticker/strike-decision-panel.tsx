@@ -21,7 +21,7 @@ import {
 } from "@/lib/options-math";
 import { formatCurrency, formatNumber, formatPercent } from "@/lib/format";
 import type { EntryScoreResponse } from "@/types/api";
-import type { ChainSelection } from "./options-chain";
+import type { StrikeSelection } from "./strike-selector";
 
 type PositionType = "covered_call" | "cash_secured_put";
 
@@ -67,7 +67,7 @@ export function StrikeDecisionPanel({
   putScore,
   callScore,
 }: {
-  selection: ChainSelection | null;
+  selection: StrikeSelection | null;
   currentPrice: number | null;
   putScore: EntryScoreResponse | null;
   callScore: EntryScoreResponse | null;
@@ -133,7 +133,7 @@ export function StrikeDecisionPanel({
   if (!selection) {
     return (
       <p className="text-sm text-muted">
-        Click a strike in the chain above to see its full decision breakdown.
+        Select a DTE, strike, and direction above to see the full decision breakdown.
       </p>
     );
   }

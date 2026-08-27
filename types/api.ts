@@ -165,6 +165,13 @@ export interface BriefingResponse {
   cached: boolean;
 }
 
+export interface MarketPulseResponse {
+  content: BriefingContent;
+  generatedAt: string;
+  cached: boolean;
+  headlines: NewsHeadline[];
+}
+
 export interface IvComponentResult {
   score: number | null;
   percentile: number | null;

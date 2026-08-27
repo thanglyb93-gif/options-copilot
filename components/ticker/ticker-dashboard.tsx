@@ -14,11 +14,11 @@ import type {
 import { Section, SkeletonLines, ErrorNote } from "./section";
 import { QuoteHeader } from "./quote-header";
 import { VolatilityPanel } from "./volatility-panel";
-import { EarningsPanel } from "./earnings-panel";
-import { OptionsChain, type ChainSelection } from "./options-chain";
+import { MarketReadPanel } from "./market-read-panel";
+import { StrikeSelector, type StrikeSelection } from "./strike-selector";
 import { StrikeDecisionPanel } from "./strike-decision-panel";
-import { BriefingPanel } from "./briefing-panel";
 import { EntryScorePanel } from "./entry-score-panel";
+import { HeadlineList } from "@/components/headline-list";
 
 export function TickerDashboard({ symbol }: { symbol: string }) {
   const quote = useJsonFetch<QuoteResponse>(`/api/quote/${symbol}`);
@@ -30,7 +30,7 @@ export function TickerDashboard({ symbol }: { symbol: string }) {
   const putScore = useJsonFetch<EntryScoreResponse>(`/api/entry-score/${symbol}?direction=put`);
   const callScore = useJsonFetch<EntryScoreResponse>(`/api/entry-score/${symbol}?direction=call`);
 
-  const [selection, setSelection] = useState<ChainSelection | null>(null);
+  const [selection, setSelection] = useState<StrikeSelection | null>(null);
 
   return (
     <div className="flex flex-col gap-4">
@@ -40,51 +40,50 @@ export function TickerDashboard({ symbol }: { symbol: string }) {
         {quote.loading && <SkeletonLines count={3} />}
         {quote.error && <ErrorNote message={quote.error} />}
         {quote.data && <QuoteHeader quote={quote.data} />}
-      </Section>
 
-      <Section title="Entry Score">
-        <EntryScorePanel putScore={putScore} callScore={callScore} selection={selection} />
-      </Section>
-
-      <Section title="Volatility">
-        {(options.loading || quote.loading || ivHistory.loading) && <SkeletonLines count={2} />}
-        {(options.error || quote.error || ivHistory.error) && (
-          <ErrorNote message={options.error ?? quote.error ?? ivHistory.error ?? "Failed to load"} />
+        {(options.loading || ivHistory.loading) && <SkeletonLines count={2} />}
+        {(options.error || ivHistory.error) && (
+          <ErrorNote message={options.error ?? ivHistory.error ?? "Failed to load"} />
         )}
         {options.data && quote.data && ivHistory.data && (
           <VolatilityPanel options={options.data} quote={quote.data} ivHistory={ivHistory.data} />
         )}
       </Section>
 
-      <Section title="Earnings & Catalysts">
-        {earnings.loading && <SkeletonLines count={3} />}
-        {earnings.error && <ErrorNote message={earnings.error} />}
-        {earnings.data && <EarningsPanel earnings={earnings.data} news={news.data} />}
+      <Section title="Market Read">
+        <MarketReadPanel symbol={symbol} earningsState={earnings} />
       </Section>
 
-      <Section title="Briefing">
-        <BriefingPanel symbol={symbol} />
+      <Section title="Entry Score">
+        <EntryScorePanel putScore={putScore} callScore={callScore} selection={selection} />
       </Section>
 
-      <Section title="Options Chain">
-        {options.loading && <SkeletonLines count={5} />}
-        {options.error && <ErrorNote message={options.error} />}
-        {options.data && (
-          <OptionsChain
-            options={options.data}
-            maxPain={maxPain.data}
-            onSelectContract={setSelection}
+      <Section title="Strike Selector">
+        <div className="flex flex-col gap-5">
+          {options.loading && <SkeletonLines count={2} />}
+          {options.error && <ErrorNote message={options.error} />}
+          {options.data && (
+            <StrikeSelector
+              options={options.data}
+              underlyingPrice={quote.data?.price ?? options.data.underlyingPrice}
+              maxPain={maxPain.data}
+              onSelectionChange={setSelection}
+            />
+          )}
+
+          <StrikeDecisionPanel
+            selection={selection}
+            currentPrice={quote.data?.price ?? null}
+            putScore={putScore.data}
+            callScore={callScore.data}
           />
-        )}
+        </div>
       </Section>
 
-      <Section title="Strike Decision Panel">
-        <StrikeDecisionPanel
-          selection={selection}
-          currentPrice={quote.data?.price ?? null}
-          putScore={putScore.data}
-          callScore={callScore.data}
-        />
+      <Section title="Further Reading">
+        {news.loading && <SkeletonLines count={3} />}
+        {news.error && <ErrorNote message={news.error} />}
+        {news.data && <HeadlineList headlines={news.data.headlines} />}
       </Section>
     </div>
   );

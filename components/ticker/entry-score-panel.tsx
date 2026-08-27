@@ -4,7 +4,7 @@ import type { FetchState } from "@/lib/use-json-fetch";
 import { combineWithStrikeCushion } from "@/lib/entry-score";
 import type { EntryScoreResponse } from "@/types/api";
 import { SkeletonLines, ErrorNote } from "./section";
-import type { ChainSelection } from "./options-chain";
+import type { StrikeSelection } from "./strike-selector";
 
 function ordinal(n: number): string {
   const rounded = Math.round(n);
@@ -45,7 +45,7 @@ function ivPercentileDetail(data: EntryScoreResponse): string {
   return `${iv.score.toFixed(1)} (${prefix}${ordinal(iv.percentile ?? 0)} percentile${suffix})`;
 }
 
-function technicalDetail(matchedSelection: ChainSelection | null): string {
+function technicalDetail(matchedSelection: StrikeSelection | null): string {
   if (!matchedSelection) return "— (select a strike below)";
   const { contract, strike } = matchedSelection;
   if (contract.cushionScore == null) return `— (unavailable for strike ${strike})`;
@@ -66,7 +66,7 @@ function EntryScoreCard({
   label: string;
   direction: "put" | "call";
   scoreState: FetchState<EntryScoreResponse>;
-  selection: ChainSelection | null;
+  selection: StrikeSelection | null;
 }) {
   const { data, loading, error } = scoreState;
   const matchedSelection = selection && selection.direction === direction ? selection : null;
@@ -139,7 +139,7 @@ export function EntryScorePanel({
 }: {
   putScore: FetchState<EntryScoreResponse>;
   callScore: FetchState<EntryScoreResponse>;
-  selection: ChainSelection | null;
+  selection: StrikeSelection | null;
 }) {
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">

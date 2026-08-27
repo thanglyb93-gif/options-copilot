@@ -117,7 +117,14 @@ export function getFinnhubClient(): FinnhubClient {
   return client;
 }
 
-/** Macro/general market headlines (Fed commentary, inflation, jobs data, etc). */
-export async function fetchGeneralMarketNews(): Promise<FinnhubNewsItem[]> {
-  return getFinnhubClient().getGeneralNews();
+/**
+ * Macro/general market headlines (Fed commentary, inflation and jobs data,
+ * major M&A, geopolitical developments, notable S&P 500 earnings, etc).
+ * Finnhub's general-news endpoint doesn't take a date range or limit --
+ * this sorts newest-first and caps to `limit` so callers get a
+ * predictable, healthy volume of the most recent items.
+ */
+export async function fetchGeneralMarketNews(limit = 50): Promise<FinnhubNewsItem[]> {
+  const news = await getFinnhubClient().getGeneralNews();
+  return news.slice().sort((a, b) => b.datetime - a.datetime).slice(0, limit);
 }

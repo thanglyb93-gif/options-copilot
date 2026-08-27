@@ -34,6 +34,13 @@ export function formatDate(value: string | null | undefined): string {
   return date.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
 }
 
+export function formatMonthDay(value: string | null | undefined): string {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
 export function formatRelativeTime(iso: string): string {
   const then = new Date(iso).getTime();
   const diffMs = Date.now() - then;
