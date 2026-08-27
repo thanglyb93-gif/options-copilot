@@ -27,8 +27,12 @@ export function strikeCushion(
     : (strike - currentPrice) / expectedMoveValue;
 }
 
-/** EM-multiple -> score. Checked top-down; first satisfied band wins. */
-const CUSHION_SCORE_BANDS = [
+/**
+ * EM-multiple -> score. Checked top-down; first satisfied band wins.
+ * Exported so lib/guidance-content.ts can generate its threshold
+ * descriptions directly from this, rather than duplicating the numbers.
+ */
+export const CUSHION_SCORE_BANDS = [
   { min: 2.0, score: 2.0 },
   { min: 1.5, score: 1.5 },
   { min: 1.0, score: 1.0 },

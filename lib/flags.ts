@@ -42,18 +42,28 @@ export function earningsCooldownFlag(
   };
 }
 
-/** Whether |delta| falls within the target band (default 0.20-0.30). */
+/**
+ * Target delta/DTE band bounds, named and exported so lib/guidance-
+ * content.ts can generate its threshold descriptions directly from
+ * these rather than duplicating the numbers as separate prose.
+ */
+export const DELTA_BAND_MIN = 0.2;
+export const DELTA_BAND_MAX = 0.3;
+export const DTE_BAND_MIN = 30;
+export const DTE_BAND_MAX = 45;
+
+/** Whether |delta| falls within the target band. */
 export function deltaBandFlag(
   delta: number,
-  min = 0.2,
-  max = 0.3
+  min = DELTA_BAND_MIN,
+  max = DELTA_BAND_MAX
 ): boolean {
   const absDelta = Math.abs(delta);
   return absDelta >= min && absDelta <= max;
 }
 
-/** Whether days-to-expiration falls within the target band (default 30-45). */
-export function dteBandFlag(dte: number, min = 30, max = 45): boolean {
+/** Whether days-to-expiration falls within the target band. */
+export function dteBandFlag(dte: number, min = DTE_BAND_MIN, max = DTE_BAND_MAX): boolean {
   return dte >= min && dte <= max;
 }
 

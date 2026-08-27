@@ -98,3 +98,19 @@ export async function PATCH(
 
   return NextResponse.json({ position: data });
 }
+
+/** Permanently removes a logged position -- for correcting a mis-entered log, not a routine "close" action (use POST .../close for that). */
+export async function DELETE(
+  _request: Request,
+  { params }: { params: { id: string } }
+) {
+  const supabase = getSupabaseRouteClient();
+
+  const { error } = await supabase.from("positions").delete().eq("id", params.id);
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 502 });
+  }
+
+  return NextResponse.json({ success: true });
+}

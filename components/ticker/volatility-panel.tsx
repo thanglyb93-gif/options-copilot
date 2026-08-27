@@ -1,6 +1,6 @@
 import type { IvHistoryResponse, OptionsResponse, QuoteResponse } from "@/types/api";
 import { percentileRank } from "@/lib/volatility";
-import { formatPercent } from "@/lib/format";
+import { formatOrdinal, formatPercent } from "@/lib/format";
 
 function pct(value: number | null): string {
   return value != null ? formatPercent(value * 100, 1) : "—";
@@ -19,13 +19,13 @@ export function VolatilityPanel({
   const hv = quote.hv30;
   const ratio = iv != null && hv != null && hv > 0 ? iv / hv : null;
 
-  const rank =
+  const ivPercentile =
     ivHistory.hasEnoughHistory && iv != null
       ? percentileRank(iv, ivHistory.ivValues)
       : null;
 
   return (
-    <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+    <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
       <div className="flex flex-col gap-0.5">
         <span className="text-[11px] uppercase tracking-wide text-muted">Front-Month ATM IV</span>
         <span className="font-mono text-sm text-foreground">{pct(iv)}</span>
@@ -41,11 +41,17 @@ export function VolatilityPanel({
         </span>
       </div>
       <div className="flex flex-col gap-0.5">
-        <span className="text-[11px] uppercase tracking-wide text-muted">IV Rank</span>
+        <span className="text-[11px] uppercase tracking-wide text-muted">IV Percentile</span>
         <span className="font-mono text-sm text-foreground">
-          {rank != null
-            ? `${rank.toFixed(0)}%ile`
-            : `Building history (${ivHistory.count}/${ivHistory.needed} days)`}
+          {ivPercentile != null
+            ? formatOrdinal(ivPercentile)
+            : `— (${ivHistory.count}/${ivHistory.needed})`}
+        </span>
+      </div>
+      <div className="flex flex-col gap-0.5">
+        <span className="text-[11px] uppercase tracking-wide text-muted">HV Percentile</span>
+        <span className="font-mono text-sm text-foreground">
+          {quote.hvPercentile != null ? formatOrdinal(quote.hvPercentile) : "—"}
         </span>
       </div>
     </div>

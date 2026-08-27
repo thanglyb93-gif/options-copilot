@@ -3,6 +3,7 @@ import { getSupabaseRouteClient } from "@/lib/supabase";
 import { fetchTargetExpirationChain, fetchHistoricalCloses } from "@/lib/yahoo";
 import { atmImpliedVolatility, historicalVolatility } from "@/lib/volatility";
 import { unreliableIvFlag } from "@/lib/flags";
+import { sendIvSnapshotFailureAlert } from "@/lib/alerts";
 
 interface SnapshotResult {
   ticker: string;
@@ -69,6 +70,17 @@ async function runSnapshot(): Promise<{ date: string; results: SnapshotResult[] 
         error: error instanceof Error ? error.message : "Unknown error",
       });
     }
+  }
+
+  const failures = results
+    .filter((r) => r.status !== "ok")
+    .map((r) => ({ ticker: r.ticker, status: r.status as "skipped" | "error", error: r.error }));
+
+  if (failures.length > 0) {
+    // Best-effort, time-boxed -- must never risk the route's own timeout
+    // (Vercel Hobby cron gives this 10s total) or turn an email problem
+    // into a snapshot-run problem.
+    await sendIvSnapshotFailureAlert(today, failures);
   }
 
   return { date: today, results };

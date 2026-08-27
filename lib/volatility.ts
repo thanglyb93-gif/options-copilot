@@ -100,3 +100,25 @@ export function rollingHistoricalVolatility(
   }
   return series;
 }
+
+export interface HvPercentileResult {
+  percentile: number | null;
+  currentHv: number | null;
+  sampleCount: number;
+}
+
+/**
+ * Percentile rank of the stock's current 30-day HV against its own
+ * trailing ~1-year distribution of 30-day HV values, built purely from
+ * already-fetched daily closes. Unlike IV Percentile (which needs 20+
+ * real iv_history rows accumulated one calendar day at a time), this is
+ * available immediately -- a real, independent metric in its own right,
+ * not just a stand-in for IV. Reuses rollingHistoricalVolatility for the
+ * distribution.
+ */
+export function hvPercentileRank(closes: CloseLike[], window = 30): HvPercentileResult {
+  const currentHv = historicalVolatility(closes, window);
+  const series = rollingHistoricalVolatility(closes, window);
+  const percentile = currentHv != null ? percentileRank(currentHv, series) : null;
+  return { percentile, currentHv, sampleCount: series.length };
+}

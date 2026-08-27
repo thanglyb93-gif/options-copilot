@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import type { WatchlistListResponse, WatchlistRow } from "@/types/api";
 import { SearchBar } from "./search-bar";
 import { WatchlistCard } from "./watchlist-card";
+import { IvHealthBanner } from "./iv-health-banner";
 
 export function DashboardHome() {
   const [rows, setRows] = useState<WatchlistRow[] | null>(null);
@@ -26,6 +27,8 @@ export function DashboardHome() {
 
   return (
     <div className="flex flex-col gap-6">
+      <IvHealthBanner />
+
       <div className="flex flex-col gap-2">
         <h1 className="text-lg font-semibold text-foreground">Dashboard</h1>
         <SearchBar onAdd={addRow} />

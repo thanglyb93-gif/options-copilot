@@ -32,6 +32,10 @@ export type PositionRow = {
   status: PositionStatus;
   opened_at: string;
   closed_at: string | null;
+  /** Per-share price paid to buy back the option early, when closed (not assigned). */
+  closing_premium: number | null;
+  /** Realized net P/L (stock leg + option leg combined) at close/assignment -- see lib/position-analytics.ts. */
+  realized_pl: number | null;
 };
 
 export type IvHistoryRow = {
@@ -70,6 +74,8 @@ export interface Database {
             | "status"
             | "opened_at"
             | "closed_at"
+            | "closing_premium"
+            | "realized_pl"
           >
         > &
           Pick<

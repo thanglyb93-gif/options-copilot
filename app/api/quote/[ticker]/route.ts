@@ -5,7 +5,7 @@ import {
   fetchHistoricalCloses,
   simpleMovingAverage,
 } from "@/lib/yahoo";
-import { historicalVolatility } from "@/lib/volatility";
+import { historicalVolatility, hvPercentileRank } from "@/lib/volatility";
 
 export async function GET(
   _request: Request,
@@ -54,6 +54,7 @@ export async function GET(
       sma50: simpleMovingAverage(closes, 50),
       sma200: simpleMovingAverage(closes, 200),
       hv30: historicalVolatility(closes, 30),
+      hvPercentile: hvPercentileRank(closes, 30).percentile,
       asOf: new Date().toISOString(),
     });
   } catch (error) {

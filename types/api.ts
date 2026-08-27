@@ -27,6 +27,8 @@ export interface QuoteResponse {
   sma50: number | null;
   sma200: number | null;
   hv30: number | null;
+  /** Percentile rank of current 30d HV against its own trailing ~1yr distribution -- available immediately, no accumulation period. */
+  hvPercentile: number | null;
   asOf: string;
 }
 
@@ -118,13 +120,59 @@ export interface IvHistoryResponse {
   rows: { date: string; implied_volatility_avg: number | null; trailing_30d_hv: number | null }[];
 }
 
+export interface DecayCurvePoint {
+  dte: number;
+  theoreticalValue: number;
+}
+
+export interface CloseSignalResult {
+  shouldClose: boolean;
+  reason: string | null;
+}
+
+export interface ItmRiskClassificationResult {
+  classification: "sell-the-news" | "real-breakdown" | "unclear";
+  recommendedAction: "hold" | "close" | "monitor";
+  reasoning: string[];
+  breachPct: number;
+}
+
+/** Live analytics for an OPEN position -- null/omitted for closed positions, which don't need them. */
+export interface PositionAnalytics {
+  dte: number;
+  currentUnderlyingPrice: number | null;
+  /** Reference price per share for the option today -- respects Phase 7's market-hours fallback (null only when genuinely unreliable). */
+  currentContractValue: number | null;
+  usingLastPriceFallback: boolean;
+  contractUnreliable: boolean;
+  stockPL: number | null;
+  optionLegPL: number | null;
+  /** The headline number: stock leg + option leg combined. Never surface optionLegPL alone as if it's the whole picture. */
+  netCoveredPL: number | null;
+  profitCapturedPct: number | null;
+  decayCurve: DecayCurvePoint[];
+  closeSignal: CloseSignalResult;
+  /** Only populated when the position is currently ITM. */
+  itmRiskClassification: ItmRiskClassificationResult | null;
+}
+
 export interface PositionSummary {
   id: string;
   ticker: string;
   position_type: "covered_call" | "cash_secured_put";
   shares_owned: number | null;
   cost_basis: number | null;
+  strike: number;
+  premium_collected: number;
+  expiration_date: string;
+  contracts: number;
   status: "open" | "closed" | "assigned" | "expired";
+  opened_at: string;
+  closed_at: string | null;
+  closing_premium: number | null;
+  realized_pl: number | null;
+  /** Populated only for status === "open". */
+  analytics: PositionAnalytics | null;
 }
 
 export interface PositionsListResponse {
@@ -188,9 +236,23 @@ export interface MarketPulseResponse {
 export interface IvComponentResult {
   score: number | null;
   percentile: number | null;
+  hvPercentile: number | null;
   note?: string;
   isApproximation: boolean;
   realHistoryCount: number;
+}
+
+export interface IvHistoryGap {
+  ticker: string;
+  missingDates: string[];
+  expectedCount: number;
+  collectedCount: number;
+}
+
+export interface IvHealthResponse {
+  healthy: boolean;
+  gaps: IvHistoryGap[];
+  checkedAt: string;
 }
 
 export interface EventComponentResult {

@@ -18,14 +18,21 @@ export type TradeDirection = "put" | "call";
 // for magic numbers scattered through the scoring functions below.
 // ---------------------------------------------------------------------------
 
+/**
+ * Exported (not just internal): lib/guidance-content.ts generates the
+ * Guidance page's threshold descriptions directly from these constants,
+ * so they're the single source of truth -- change a value here and the
+ * displayed text changes with it, no separate prose to keep in sync.
+ */
+
 /** Minimum iv_history rows before a real IV percentile is considered meaningful. */
-const IV_HISTORY_MIN_ROWS = 20;
+export const IV_HISTORY_MIN_ROWS = 20;
 
 /** Minimum rolling-HV samples before the HV-based approximation is trusted. */
-const HV_FALLBACK_MIN_SAMPLES = 30;
+export const HV_FALLBACK_MIN_SAMPLES = 30;
 
 /** IV percentile -> score. Checked top-down; first satisfied band wins. */
-const IV_PERCENTILE_BANDS = [
+export const IV_PERCENTILE_BANDS = [
   { min: 70, score: 2.0 },
   { min: 55, score: 1.5 },
   { min: 40, score: 1.0 },
@@ -34,10 +41,10 @@ const IV_PERCENTILE_BANDS = [
 ] as const;
 
 /** A catalyst counts as "recent" within this many days. */
-const CATALYST_RECENCY_WINDOW_DAYS = 14;
+export const CATALYST_RECENCY_WINDOW_DAYS = 14;
 
 /** Headline count that counts as a catalyst on its own, absent recent earnings. */
-const CATALYST_MIN_HEADLINES = 3;
+export const CATALYST_MIN_HEADLINES = 3;
 
 /**
  * Full-score (0-6: this module's 0-4 partial + a selected strike's 0-2
@@ -86,11 +93,20 @@ export interface BriefingScoreInput {
 
 export interface IvComponentResult {
   score: number | null;
+  /** Real IV Percentile -- null until IV_HISTORY_MIN_ROWS real iv_history rows exist. */
   percentile: number | null;
+  /**
+   * HV Percentile -- a real, independent metric computed purely from
+   * daily closes, always present when computable (regardless of which
+   * one is driving `score`). Shown permanently alongside IV Percentile,
+   * not just while IV is immature -- a divergence between the two is
+   * itself useful signal.
+   */
+  hvPercentile: number | null;
   note?: string;
-  /** True when percentile/score come from the HV-based fallback, not real iv_history. */
+  /** True when `score` is driven by HV Percentile, not real IV Percentile. */
   isApproximation: boolean;
-  /** Real iv_history row count, regardless of which path produced the score -- lets the UI show "N/20" progress even while the fallback is active. */
+  /** Real iv_history row count, regardless of which path produced the score -- lets the UI show "N/20" progress even while HV Percentile is driving the score. */
   realHistoryCount: number;
 }
 
@@ -135,11 +151,21 @@ export function tierForTotal(total: number): string {
 export function scoreIvComponent(input: IvPercentileInput): IvComponentResult {
   const realCount = input.historicalValues.length;
 
+  // HV Percentile is always computed, independent of which path drives
+  // the score -- it's a permanent, standalone indicator now, not just a
+  // fallback for when IV is immature.
+  const fallback = input.hvFallback;
+  const hvPercentile =
+    fallback?.currentHv != null && fallback.hvSeries.length >= HV_FALLBACK_MIN_SAMPLES
+      ? percentileRank(fallback.currentHv, fallback.hvSeries)
+      : null;
+
   if (realCount >= IV_HISTORY_MIN_ROWS) {
     if (input.currentIv == null) {
       return {
         score: null,
         percentile: null,
+        hvPercentile,
         note: "Current IV unavailable",
         isApproximation: false,
         realHistoryCount: realCount,
@@ -150,32 +176,38 @@ export function scoreIvComponent(input: IvPercentileInput): IvComponentResult {
       return {
         score: null,
         percentile: null,
+        hvPercentile,
         note: "Current IV unavailable",
         isApproximation: false,
         realHistoryCount: realCount,
       };
     }
-    return { score: bandIvPercentile(percentile), percentile, isApproximation: false, realHistoryCount: realCount };
+    return {
+      score: bandIvPercentile(percentile),
+      percentile,
+      hvPercentile,
+      isApproximation: false,
+      realHistoryCount: realCount,
+    };
   }
 
-  // Fewer than IV_HISTORY_MIN_ROWS real rows -- try the HV-based approximation.
-  const fallback = input.hvFallback;
-  if (fallback?.currentHv != null && fallback.hvSeries.length >= HV_FALLBACK_MIN_SAMPLES) {
-    const percentile = percentileRank(fallback.currentHv, fallback.hvSeries);
-    if (percentile != null) {
-      return {
-        score: bandIvPercentile(percentile),
-        percentile,
-        note: `HV-based estimate, not true IV — ${realCount}/${IV_HISTORY_MIN_ROWS} days of real IV history collected`,
-        isApproximation: true,
-        realHistoryCount: realCount,
-      };
-    }
+  // Fewer than IV_HISTORY_MIN_ROWS real rows -- HV Percentile drives the
+  // score instead, clearly labeled as such (see isApproximation).
+  if (hvPercentile != null) {
+    return {
+      score: bandIvPercentile(hvPercentile),
+      percentile: null,
+      hvPercentile,
+      note: `IV still building history (${realCount}/${IV_HISTORY_MIN_ROWS} days) -- score based on HV Percentile`,
+      isApproximation: true,
+      realHistoryCount: realCount,
+    };
   }
 
   return {
     score: null,
     percentile: null,
+    hvPercentile: null,
     note: `Building history (${realCount}/${IV_HISTORY_MIN_ROWS} days)`,
     isApproximation: false,
     realHistoryCount: realCount,

@@ -41,6 +41,22 @@ export function formatMonthDay(value: string | null | undefined): string {
   return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
+export function formatOrdinal(value: number): string {
+  const rounded = Math.round(value);
+  const mod100 = rounded % 100;
+  if (mod100 >= 11 && mod100 <= 13) return `${rounded}th`;
+  switch (rounded % 10) {
+    case 1:
+      return `${rounded}st`;
+    case 2:
+      return `${rounded}nd`;
+    case 3:
+      return `${rounded}rd`;
+    default:
+      return `${rounded}th`;
+  }
+}
+
 export function formatRelativeTime(iso: string): string {
   const then = new Date(iso).getTime();
   const diffMs = Date.now() - then;

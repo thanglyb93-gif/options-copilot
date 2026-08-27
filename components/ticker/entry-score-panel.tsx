@@ -2,25 +2,10 @@
 
 import type { FetchState } from "@/lib/use-json-fetch";
 import { combineWithStrikeCushion } from "@/lib/entry-score";
-import type { EntryScoreResponse } from "@/types/api";
+import { formatOrdinal } from "@/lib/format";
+import type { EntryScoreResponse, IvComponentResult } from "@/types/api";
 import { SkeletonLines, ErrorNote } from "./section";
 import type { StrikeSelection } from "./strike-selector";
-
-function ordinal(n: number): string {
-  const rounded = Math.round(n);
-  const mod100 = rounded % 100;
-  if (mod100 >= 11 && mod100 <= 13) return `${rounded}th`;
-  switch (rounded % 10) {
-    case 1:
-      return `${rounded}st`;
-    case 2:
-      return `${rounded}nd`;
-    case 3:
-      return `${rounded}rd`;
-    default:
-      return `${rounded}th`;
-  }
-}
 
 function tierClasses(tier: string): { text: string; border: string } {
   if (tier.startsWith("SELL")) return { text: "text-accent", border: "border-accent/40" };
@@ -28,7 +13,7 @@ function tierClasses(tier: string): { text: string; border: string } {
   return { text: "text-red-400", border: "border-red-500/40" };
 }
 
-function ComponentRow({ label, detail }: { label: string; detail: string }) {
+function ComponentRow({ label, detail }: { label: string; detail: React.ReactNode }) {
   return (
     <div className="flex items-baseline justify-between gap-2 text-sm">
       <span className="text-muted">{label}</span>
@@ -37,12 +22,31 @@ function ComponentRow({ label, detail }: { label: string; detail: string }) {
   );
 }
 
-function ivPercentileDetail(data: EntryScoreResponse): string {
-  const iv = data.ivComponent;
-  if (iv.score == null) return `— (${iv.note ?? "unavailable"})`;
-  const prefix = iv.isApproximation ? "~" : "";
-  const suffix = iv.isApproximation ? ` (${iv.note})` : "";
-  return `${iv.score.toFixed(1)} (${prefix}${ordinal(iv.percentile ?? 0)} percentile${suffix})`;
+/**
+ * IV Percentile and HV Percentile are two permanent, independent
+ * indicators -- both always shown when computable, never one standing in
+ * for the other. The score attribution below states plainly which one
+ * actually produced `score`, so it's never ambiguous.
+ */
+function IvComponentDetail({ iv }: { iv: IvComponentResult }) {
+  const ivText = iv.percentile != null ? `${formatOrdinal(iv.percentile)} pctile` : `${iv.realHistoryCount}/20d`;
+  const hvText = iv.hvPercentile != null ? `${formatOrdinal(iv.hvPercentile)} pctile` : "—";
+
+  return (
+    <div className="flex flex-col items-end gap-0.5">
+      <span className="font-mono text-foreground">
+        {iv.score != null ? iv.score.toFixed(1) : "—"}
+        {iv.score != null && (
+          <span className="ml-1 text-xs font-normal text-muted">
+            (based on {iv.isApproximation ? "HV" : "IV"} Percentile)
+          </span>
+        )}
+      </span>
+      <span className="text-xs text-muted">
+        IV: {ivText} · HV: {hvText}
+      </span>
+    </div>
+  );
 }
 
 function technicalDetail(matchedSelection: StrikeSelection | null): string {
@@ -117,7 +121,7 @@ function EntryScoreCard({
           )}
 
           <div className="flex flex-col gap-1.5 border-t border-border pt-3">
-            <ComponentRow label="IV Percentile" detail={ivPercentileDetail(data)} />
+            <ComponentRow label="IV Component" detail={<IvComponentDetail iv={data.ivComponent} />} />
             <ComponentRow label="Technical" detail={technicalDetail(matchedSelection)} />
             <ComponentRow
               label="Events"
