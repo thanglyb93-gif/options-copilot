@@ -95,6 +95,26 @@ export function simpleMovingAverage(
   return sum / period;
 }
 
+export interface ThreeMonthRange {
+  high: number;
+  low: number;
+}
+
+/**
+ * High/low over the most recent `tradingDays` closes (default 63, ~3
+ * calendar months) -- slices the closes array already fetched for SMA
+ * calculation rather than issuing a separate request.
+ */
+export function computeThreeMonthRange(
+  closes: DailyClose[],
+  tradingDays = 63
+): ThreeMonthRange | null {
+  if (closes.length === 0) return null;
+  const window = closes.slice(-tradingDays);
+  const values = window.map((c) => c.close);
+  return { high: Math.max(...values), low: Math.min(...values) };
+}
+
 export interface ExpirationChain {
   expirationDate: Date;
   calls: Option["calls"];
@@ -173,4 +193,73 @@ export async function fetchNearestExpirationChain(
 export function daysToExpiration(expirationDate: Date): number {
   const ms = expirationDate.getTime() - Date.now();
   return Math.max(0, Math.round(ms / (24 * 60 * 60 * 1000)));
+}
+
+/**
+ * Fetches just the expiration closest to `targetDte` (default 37, the
+ * midpoint of the 30-45 DTE band) -- two Yahoo requests (expiration list,
+ * then that one chain) instead of fetchOptionsChainWithinDays' N+1. Used
+ * where only a single representative chain is needed, e.g. a watchlist
+ * card's ATM IV.
+ */
+export async function fetchTargetExpirationChain(
+  ticker: string,
+  targetDte = 37
+): Promise<NearestExpirationChain> {
+  const yahooFinance = getYahooClient();
+  const base: OptionsResult = await yahooFinance.options(ticker);
+
+  const now = Date.now();
+  const future = base.expirationDates.filter((d) => d.getTime() >= now);
+  const candidates = future.length > 0 ? future : base.expirationDates;
+
+  let target = candidates[0];
+  let bestDiff = Infinity;
+  for (const date of candidates) {
+    const diff = Math.abs(daysToExpiration(date) - targetDte);
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      target = date;
+    }
+  }
+
+  const result = await yahooFinance.options(ticker, { date: target });
+  const chain = result.options[0];
+
+  return {
+    underlyingPrice: result.quote?.regularMarketPrice,
+    expirationDate: chain?.expirationDate ?? target,
+    calls: chain?.calls ?? [],
+    puts: chain?.puts ?? [],
+  };
+}
+
+export interface SearchMatch {
+  symbol: string;
+  name: string;
+  quoteType: string;
+}
+
+/** Resolves a company name or partial ticker to real symbols. */
+export async function fetchSearchResults(
+  query: string,
+  limit = 8
+): Promise<SearchMatch[]> {
+  const result = await getYahooClient().search(query, {
+    quotesCount: limit,
+    newsCount: 0,
+  });
+
+  return result.quotes
+    .filter(
+      (q): q is typeof q & { isYahooFinance: true; symbol: string } =>
+        "isYahooFinance" in q &&
+        q.isYahooFinance === true &&
+        (q.quoteType === "EQUITY" || q.quoteType === "ETF")
+    )
+    .map((q) => ({
+      symbol: q.symbol,
+      name: q.longname ?? q.shortname ?? q.symbol,
+      quoteType: q.quoteType,
+    }));
 }

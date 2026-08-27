@@ -97,6 +97,10 @@ export class FinnhubClient {
   ): Promise<FinnhubNewsItem[]> {
     return this.request<FinnhubNewsItem[]>("/company-news", { symbol, from, to });
   }
+
+  async getGeneralNews(category = "general"): Promise<FinnhubNewsItem[]> {
+    return this.request<FinnhubNewsItem[]>("/news", { category });
+  }
 }
 
 /**
@@ -111,4 +115,9 @@ export function getFinnhubClient(): FinnhubClient {
     client = new FinnhubClient();
   }
   return client;
+}
+
+/** Macro/general market headlines (Fed commentary, inflation, jobs data, etc). */
+export async function fetchGeneralMarketNews(): Promise<FinnhubNewsItem[]> {
+  return getFinnhubClient().getGeneralNews();
 }

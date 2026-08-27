@@ -162,3 +162,12 @@ export function findClosestDteIndex(dtes: number[], target = 37): number {
   });
   return bestIndex;
 }
+
+/**
+ * Formats delta as a rough assignment-probability label. Delta already
+ * approximates probability of expiring ITM -- this is display formatting
+ * only, not a new calculation.
+ */
+export function assignmentProbabilityLabel(delta: number): string {
+  return `~${Math.round(Math.abs(delta) * 100)}%`;
+}

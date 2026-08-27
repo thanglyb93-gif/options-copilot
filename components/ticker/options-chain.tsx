@@ -6,9 +6,12 @@ import { formatCurrency, formatNumber, formatPercent } from "@/lib/format";
 
 export interface ChainSelection {
   positionType: "covered_call" | "cash_secured_put";
+  direction: "put" | "call";
   strike: number;
   premium: number;
   dte: number;
+  expirationDate: string;
+  contract: ContractRow;
 }
 
 function midPrice(row: ContractRow): number | null {
@@ -20,6 +23,32 @@ function ivCell(row: ContractRow) {
   if (row.impliedVolatility == null) return <span className="text-muted">—</span>;
   if (row.ivUnreliable) return <span className="text-muted" title="Implausible IV from source data">unreliable</span>;
   return <span>{formatPercent(row.impliedVolatility * 100, 0)}</span>;
+}
+
+/** Background tint that darkens with cushion score -- a scannable green gradient. */
+function cushionClasses(score: number | null): string {
+  if (score == null) return "text-muted";
+  if (score >= 2) return "bg-accent/30 text-foreground font-semibold";
+  if (score >= 1.5) return "bg-accent/20 text-foreground";
+  if (score >= 1) return "bg-accent/10 text-foreground";
+  if (score >= 0.5) return "bg-accent/5 text-foreground";
+  return "text-muted";
+}
+
+function CushionCell({ row }: { row?: ContractRow }) {
+  if (!row || row.cushionScore == null) {
+    return <td className="px-2 py-1 text-muted">—</td>;
+  }
+  const badge = row.structuralConfirmation?.confirmed;
+  return (
+    <td
+      className={`px-2 py-1 ${cushionClasses(row.cushionScore)}`}
+      title={badge ? `Structural confirmation: below/above ${row.structuralConfirmation!.referenceLabel}` : undefined}
+    >
+      {formatNumber(row.cushionScore, 1)}
+      {badge && <span className="ml-0.5 text-accent">✓</span>}
+    </td>
+  );
 }
 
 export function OptionsChain({
@@ -57,6 +86,34 @@ export function OptionsChain({
     return <p className="text-sm text-muted">No expirations available.</p>;
   }
 
+  function selectCall(strike: number, call: ContractRow) {
+    const premium = midPrice(call);
+    if (premium == null || !expiration) return;
+    onSelectContract({
+      positionType: "covered_call",
+      direction: "call",
+      strike,
+      premium,
+      dte: expiration.dte,
+      expirationDate: expiration.expirationDate,
+      contract: call,
+    });
+  }
+
+  function selectPut(strike: number, put: ContractRow) {
+    const premium = midPrice(put);
+    if (premium == null || !expiration) return;
+    onSelectContract({
+      positionType: "cash_secured_put",
+      direction: "put",
+      strike,
+      premium,
+      dte: expiration.dte,
+      expirationDate: expiration.expirationDate,
+      contract: put,
+    });
+  }
+
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-3">
@@ -72,7 +129,7 @@ export function OptionsChain({
           ))}
         </select>
         <span className="text-xs text-muted">
-          {expiration.dte} DTE · click a strike to load it into the simulator
+          {expiration.dte} DTE · click a strike to load its full decision breakdown below
         </span>
         {maxPainStrike != null ? (
           <span className="text-xs text-muted">
@@ -88,7 +145,7 @@ export function OptionsChain({
       </div>
 
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[720px] border-collapse text-right font-mono text-xs">
+        <table className="w-full min-w-[920px] border-collapse text-right font-mono text-xs">
           <thead>
             <tr className="text-muted">
               <th className="px-2 py-1 text-right font-normal">Bid</th>
@@ -96,9 +153,13 @@ export function OptionsChain({
               <th className="px-2 py-1 text-right font-normal">Vol</th>
               <th className="px-2 py-1 text-right font-normal">OI</th>
               <th className="px-2 py-1 text-right font-normal">IV</th>
+              <th className="px-2 py-1 text-right font-normal">Cushion</th>
+              <th className="px-2 py-1 text-right font-normal">Assign %</th>
               <th className="px-2 py-1 text-right font-normal">Delta</th>
               <th className="px-2 py-1 text-center font-normal text-foreground">Strike</th>
               <th className="px-2 py-1 text-left font-normal">Delta</th>
+              <th className="px-2 py-1 text-left font-normal">Assign %</th>
+              <th className="px-2 py-1 text-left font-normal">Cushion</th>
               <th className="px-2 py-1 text-left font-normal">IV</th>
               <th className="px-2 py-1 text-left font-normal">OI</th>
               <th className="px-2 py-1 text-left font-normal">Vol</th>
@@ -117,17 +178,7 @@ export function OptionsChain({
                 >
                   <td
                     className={`px-2 py-1 ${call ? "cursor-pointer hover:underline" : "text-muted"}`}
-                    onClick={() => {
-                      if (!call) return;
-                      const premium = midPrice(call);
-                      if (premium == null) return;
-                      onSelectContract({
-                        positionType: "covered_call",
-                        strike,
-                        premium,
-                        dte: expiration.dte,
-                      });
-                    }}
+                    onClick={() => call && selectCall(strike, call)}
                   >
                     {formatCurrency(call?.bid ?? null)}
                   </td>
@@ -135,6 +186,8 @@ export function OptionsChain({
                   <td className="px-2 py-1">{call?.volume ?? "—"}</td>
                   <td className="px-2 py-1">{call?.openInterest ?? "—"}</td>
                   <td className="px-2 py-1">{call ? ivCell(call) : "—"}</td>
+                  <CushionCell row={call} />
+                  <td className="px-2 py-1">{call?.assignmentProbability ?? "—"}</td>
                   <td className="px-2 py-1">{call?.delta != null ? formatNumber(call.delta, 2) : "—"}</td>
                   <td
                     className={`px-2 py-1 text-center text-sm text-foreground ${
@@ -147,23 +200,15 @@ export function OptionsChain({
                   <td className="px-2 py-1 text-left">
                     {put?.delta != null ? formatNumber(put.delta, 2) : "—"}
                   </td>
+                  <td className="px-2 py-1 text-left">{put?.assignmentProbability ?? "—"}</td>
+                  <CushionCell row={put} />
                   <td className="px-2 py-1 text-left">{put ? ivCell(put) : "—"}</td>
                   <td className="px-2 py-1 text-left">{put?.openInterest ?? "—"}</td>
                   <td className="px-2 py-1 text-left">{put?.volume ?? "—"}</td>
                   <td className="px-2 py-1 text-left">{formatCurrency(put?.bid ?? null)}</td>
                   <td
                     className={`px-2 py-1 text-left ${put ? "cursor-pointer hover:underline" : "text-muted"}`}
-                    onClick={() => {
-                      if (!put) return;
-                      const premium = midPrice(put);
-                      if (premium == null) return;
-                      onSelectContract({
-                        positionType: "cash_secured_put",
-                        strike,
-                        premium,
-                        dte: expiration.dte,
-                      });
-                    }}
+                    onClick={() => put && selectPut(strike, put)}
                   >
                     {formatCurrency(put?.ask ?? null)}
                   </td>

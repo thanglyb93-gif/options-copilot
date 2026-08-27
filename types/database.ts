@@ -1,10 +1,13 @@
 /**
  * Hand-written typing for the Supabase schema defined in
- * supabase/migrations/0001_init.sql, shaped to match what the Supabase CLI
- * would generate (Tables/Views/Functions, Relationships on each table) so
- * it satisfies @supabase/postgrest-js's GenericSchema constraint. Kept in
- * sync manually until the schema stabilizes enough to generate this.
+ * supabase/migrations/0001_init.sql and 0002_briefings.sql, shaped to
+ * match what the Supabase CLI would generate (Tables/Views/Functions,
+ * Relationships on each table) so it satisfies @supabase/postgrest-js's
+ * GenericSchema constraint. Kept in sync manually until the schema
+ * stabilizes enough to generate this.
  */
+
+import type { BriefingContent } from "@/lib/briefing";
 
 export type PositionType = "covered_call" | "cash_secured_put";
 
@@ -37,6 +40,13 @@ export type IvHistoryRow = {
   date: string;
   implied_volatility_avg: number | null;
   trailing_30d_hv: number | null;
+};
+
+export type BriefingRow = {
+  id: string;
+  ticker: string;
+  content: BriefingContent;
+  generated_at: string;
 };
 
 export interface Database {
@@ -84,6 +94,13 @@ export interface Database {
         > &
           Pick<IvHistoryRow, "ticker" | "date">;
         Update: Partial<IvHistoryRow>;
+        Relationships: [];
+      };
+      briefings: {
+        Row: BriefingRow;
+        Insert: Partial<Pick<BriefingRow, "id" | "generated_at">> &
+          Pick<BriefingRow, "ticker" | "content">;
+        Update: Partial<BriefingRow>;
         Relationships: [];
       };
     };

@@ -1,14 +1,28 @@
 import { NextResponse } from "next/server";
 import type { CallOrPut } from "yahoo-finance2/modules/options";
-import { fetchOptionsChainWithinDays, daysToExpiration } from "@/lib/yahoo";
+import {
+  fetchOptionsChainWithinDays,
+  fetchHistoricalCloses,
+  simpleMovingAverage,
+  computeThreeMonthRange,
+  daysToExpiration,
+} from "@/lib/yahoo";
 import {
   blackScholesDelta,
   blackScholesTheta,
   findClosestDteIndex,
+  assignmentProbabilityLabel,
   type OptionType,
 } from "@/lib/options-math";
 import { deltaBandFlag, dteBandFlag, unreliableIvFlag } from "@/lib/flags";
 import { atmImpliedVolatility } from "@/lib/volatility";
+import { expectedMove, strikeCushion, cushionScore } from "@/lib/expected-move";
+import {
+  operativeSupportRef,
+  operativeResistanceRef,
+  structuralConfirmation,
+  type OperativeReference,
+} from "@/lib/structural-levels";
 
 const MAX_DAYS = 60;
 
@@ -16,7 +30,8 @@ function mapContract(
   contract: CallOrPut,
   optionType: OptionType,
   underlyingPrice: number | undefined,
-  dte: number
+  dte: number,
+  operativeRef: OperativeReference | null
 ) {
   const ivUnreliable = unreliableIvFlag(contract);
 
@@ -36,6 +51,14 @@ function mapContract(
   const delta = greeksInput ? blackScholesDelta(greeksInput) : null;
   const theta = greeksInput ? blackScholesTheta(greeksInput) : null;
 
+  let emCushion: number | null = null;
+  let cushionScoreValue: number | null = null;
+  if (canComputeGreeks) {
+    const em = expectedMove(underlyingPrice!, contract.impliedVolatility, dte);
+    emCushion = strikeCushion(underlyingPrice!, contract.strike, em, optionType);
+    cushionScoreValue = cushionScore(emCushion);
+  }
+
   return {
     contractSymbol: contract.contractSymbol,
     strike: contract.strike,
@@ -49,6 +72,12 @@ function mapContract(
     theta,
     inTargetBand:
       delta != null && deltaBandFlag(delta) && dteBandFlag(dte),
+    assignmentProbability: delta != null ? assignmentProbabilityLabel(delta) : null,
+    emCushion,
+    cushionScore: cushionScoreValue,
+    structuralConfirmation: operativeRef
+      ? structuralConfirmation(contract.strike, operativeRef, optionType)
+      : null,
   };
 }
 
@@ -59,7 +88,24 @@ export async function GET(
   const ticker = params.ticker.toUpperCase();
 
   try {
-    const chain = await fetchOptionsChainWithinDays(ticker, MAX_DAYS);
+    const [chain, closes] = await Promise.all([
+      fetchOptionsChainWithinDays(ticker, MAX_DAYS),
+      fetchHistoricalCloses(ticker, 300),
+    ]);
+
+    const sma50 = simpleMovingAverage(closes, 50);
+    const ninetyDayRange = computeThreeMonthRange(closes);
+
+    // Structural reference is a ticker-level constant (same for every
+    // strike within a direction) -- computed once, applied per-row below.
+    const supportRef =
+      chain.underlyingPrice != null
+        ? operativeSupportRef(chain.underlyingPrice, sma50, ninetyDayRange?.low ?? null)
+        : null;
+    const resistanceRef =
+      chain.underlyingPrice != null
+        ? operativeResistanceRef(chain.underlyingPrice, sma50, ninetyDayRange?.high ?? null)
+        : null;
 
     const expirations = chain.expirations.map((expiration) => {
       const dte = daysToExpiration(expiration.expirationDate);
@@ -67,10 +113,10 @@ export async function GET(
         expirationDate: expiration.expirationDate.toISOString().slice(0, 10),
         dte,
         calls: expiration.calls.map((c) =>
-          mapContract(c, "call", chain.underlyingPrice, dte)
+          mapContract(c, "call", chain.underlyingPrice, dte, resistanceRef)
         ),
         puts: expiration.puts.map((p) =>
-          mapContract(p, "put", chain.underlyingPrice, dte)
+          mapContract(p, "put", chain.underlyingPrice, dte, supportRef)
         ),
       };
     });

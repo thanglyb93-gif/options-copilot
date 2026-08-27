@@ -30,6 +30,11 @@ export interface QuoteResponse {
   asOf: string;
 }
 
+export interface StructuralConfirmation {
+  confirmed: boolean;
+  referenceLabel: string;
+}
+
 export interface ContractRow {
   contractSymbol: string;
   strike: number;
@@ -42,6 +47,10 @@ export interface ContractRow {
   delta: number | null;
   theta: number | null;
   inTargetBand: boolean;
+  assignmentProbability: string | null;
+  emCushion: number | null;
+  cushionScore: number | null;
+  structuralConfirmation: StructuralConfirmation | null;
 }
 
 export interface ExpirationChain {
@@ -103,4 +112,93 @@ export interface IvHistoryResponse {
   hasEnoughHistory: boolean;
   ivValues: number[];
   rows: { date: string; implied_volatility_avg: number | null; trailing_30d_hv: number | null }[];
+}
+
+export interface WatchlistRow {
+  id: string;
+  ticker: string;
+  added_at: string;
+}
+
+export interface WatchlistListResponse {
+  watchlist: WatchlistRow[];
+}
+
+export interface SearchMatch {
+  symbol: string;
+  name: string;
+  quoteType: string;
+}
+
+export interface SearchResponse {
+  query: string;
+  matches: SearchMatch[];
+}
+
+export interface BriefingBullet {
+  fact: string;
+  source: string;
+  impact: string;
+}
+
+export type DirectionalLean = "bullish" | "neutral" | "bearish" | "mixed";
+
+export interface DirectionalLeanResult {
+  lean: DirectionalLean;
+  rationale: string;
+}
+
+export interface BriefingContent {
+  bullets: BriefingBullet[];
+  macro?: string;
+  directionalLean: DirectionalLeanResult;
+}
+
+export interface BriefingResponse {
+  ticker: string;
+  content: BriefingContent;
+  generatedAt: string;
+  cached: boolean;
+}
+
+export interface IvComponentResult {
+  score: number | null;
+  percentile: number | null;
+  note?: string;
+}
+
+export interface EventComponentResult {
+  catalystScore: number;
+  alignmentScore: number;
+  lean: string;
+  rationale: string;
+  opposesTradeDirection: boolean;
+}
+
+/**
+ * Ticker-level entry score only (IV Percentile + Events, 0-4 partial).
+ * The remaining 0-2 comes from a selected chain row's cushionScore,
+ * combined client-side once a strike is picked.
+ */
+export interface EntryScoreResponse {
+  ticker: string;
+  direction: "put" | "call";
+  ivComponent: IvComponentResult;
+  eventComponent: EventComponentResult;
+  partialTotal: number;
+  asOf: string;
+}
+
+export interface WatchlistSummaryResponse {
+  ticker: string;
+  name: string;
+  price: number | null;
+  dayChange: number | null;
+  dayChangePercent: number | null;
+  percentFrom52wHigh: number | null;
+  earningsCooldownFlagged: boolean;
+  hv30: number | null;
+  ivHvRatio: number | null;
+  ivHistory: { count: number; needed: number; hasEnoughHistory: boolean };
+  asOf: string;
 }
