@@ -6,11 +6,27 @@ type YahooFinanceClient = InstanceType<typeof YahooFinance>;
 
 let client: YahooFinanceClient | null = null;
 
+/**
+ * yahoo-finance2 falls back to `globalThis.fetch` for its HTTP calls when
+ * no override is given. In a Next.js server context that's Next's patched
+ * fetch, which applies its own persistent Data Cache to GET requests --
+ * the exact same class of bug found and fixed for supabase-js in
+ * lib/supabase.ts (a 20-row insert that kept reading back as 1 row).
+ * Here it means quote()/options() can silently serve a stale snapshot in
+ * production (e.g. a contract's bid/ask/lastPrice frozen from whenever
+ * that route was first cached), even though a fresh request to Yahoo
+ * would return current data. Every options-data read must be live, so
+ * this opts out centrally, once, the same way the Supabase clients do.
+ */
+function noStoreFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  return fetch(input, { ...init, cache: "no-store" });
+}
+
 function getYahooClient(): YahooFinanceClient {
   if (!client) {
     // Yahoo's unofficial endpoints log warnings about schema drift; not
     // actionable for this app, so keep them out of server logs.
-    client = new YahooFinance({ suppressNotices: ["yahooSurvey"] });
+    client = new YahooFinance({ suppressNotices: ["yahooSurvey"], fetch: noStoreFetch });
   }
   return client;
 }

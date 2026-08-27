@@ -21,10 +21,18 @@ export interface StrikeSelection {
   costBasis: number | null;
 }
 
+/**
+ * A contract with bid=0/ask=0 (non-null, just zero) is NOT a valid $0.00
+ * quote -- it means there's no live two-sided market right now. Returning
+ * (0+0)/2 for that case (as this used to) silently shows a real-looking
+ * "$0.00" premium with no indication anything's wrong. Mirrors the
+ * hasLiveMarket check in lib/flags.ts's assessContractReliability.
+ */
 function referencePremium(row: ContractRow): number | null {
   if (row.usingLastPriceFallback && row.lastPrice != null) return row.lastPrice;
-  if (row.bid != null && row.ask != null) return (row.bid + row.ask) / 2;
-  return row.ask ?? row.bid ?? null;
+  const hasLiveMarket = (row.bid ?? 0) > 0 && (row.ask ?? 0) > 0;
+  if (hasLiveMarket && row.bid != null && row.ask != null) return (row.bid + row.ask) / 2;
+  return null;
 }
 
 export function StrikeSelector({
@@ -148,6 +156,8 @@ export function StrikeSelector({
     return <p className="text-sm text-muted">No expirations available.</p>;
   }
 
+  const noReliablePremium = contract != null && referencePremium(contract) == null;
+
   const maxPainStrike =
     maxPain && expiration && maxPain.expirationDate === expiration.expirationDate
       ? maxPain.maxPainStrike
@@ -227,6 +237,13 @@ export function StrikeSelector({
           </label>
         )}
       </div>
+
+      {noReliablePremium && (
+        <p className="text-xs text-muted">
+          This contract has no live two-sided market right now (illiquid) -- no reliable premium
+          to calculate from. Try a different strike or expiration.
+        </p>
+      )}
 
       {maxPainStrike != null ? (
         <span className="text-xs text-muted">

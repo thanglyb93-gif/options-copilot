@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import {
   Area,
   CartesianGrid,
@@ -23,7 +23,9 @@ import { formatCurrency, formatNumber, formatPercent } from "@/lib/format";
 import type { EntryScoreResponse } from "@/types/api";
 import type { StrikeSelection } from "./strike-selector";
 
-type PositionType = "covered_call" | "cash_secured_put";
+/** Standard equity option contract size. No UI control for this -- there's
+ * nothing to configure, every contract here covers 100 shares. */
+const SHARES_PER_CONTRACT = 100;
 
 function StatCard({ label, value, big = false }: { label: string; value: string; big?: boolean }) {
   return (
@@ -33,31 +35,6 @@ function StatCard({ label, value, big = false }: { label: string; value: string;
         {value}
       </span>
     </div>
-  );
-}
-
-function NumberField({
-  label,
-  value,
-  onChange,
-  step = 1,
-}: {
-  label: string;
-  value: number;
-  onChange: (value: number) => void;
-  step?: number;
-}) {
-  return (
-    <label className="flex flex-col gap-1 text-xs text-muted">
-      {label}
-      <input
-        type="number"
-        step={step}
-        value={Number.isFinite(value) ? value : ""}
-        onChange={(e) => onChange(Number(e.target.value))}
-        className="rounded-md border border-border bg-background px-2 py-1 font-mono text-sm text-foreground"
-      />
-    </label>
   );
 }
 
@@ -72,28 +49,19 @@ export function StrikeDecisionPanel({
   putScore: EntryScoreResponse | null;
   callScore: EntryScoreResponse | null;
 }) {
-  const [positionType, setPositionType] = useState<PositionType>("covered_call");
-  const [price, setPrice] = useState<number>(0);
-  const [strike, setStrike] = useState<number>(0);
-  const [premiumPerShare, setPremiumPerShare] = useState<number>(0);
-  const [dte, setDte] = useState<number>(0);
-  const [shares, setShares] = useState<number>(100);
-
-  useEffect(() => {
-    if (!selection) return;
-    setPositionType(selection.positionType);
-    setStrike(selection.strike);
-    setPremiumPerShare(Number(selection.premium.toFixed(2)));
-    setDte(selection.dte);
-    const fallback = currentPrice ?? selection.strike;
-    setPrice((prev) => prev || fallback);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selection]);
-
-  // Cost basis is owned by the Strike Selector's dedicated field (tracked
-  // position prefill or manual entry) -- this panel only displays what it
-  // computes from it, it doesn't offer a second, independently-editable
-  // copy of the same number.
+  // Everything below is derived directly from the top-level Strike
+  // Selector's state (selection) and the live quote (currentPrice) --
+  // there is no independent local copy of position type, strike,
+  // premium, DTE, or shares. A prior version kept its own editable
+  // "what-if" mini-form (with its own Covered Call/Cash-Secured Put
+  // toggle) seeded from `selection`; that was leftover Phase 3 simulator
+  // UI that could silently drift from the top-level controls and has
+  // been removed entirely, not just hidden.
+  const positionType = selection?.positionType ?? "covered_call";
+  const strike = selection?.strike ?? 0;
+  const premiumPerShare = selection?.premium ?? 0;
+  const dte = selection?.dte ?? 0;
+  const shares = SHARES_PER_CONTRACT;
   const costBasis = selection?.costBasis ?? null;
 
   const totalPremium = premiumPerShare * shares;
@@ -117,7 +85,7 @@ export function StrikeDecisionPanel({
       : null;
 
   const chartData = useMemo(() => {
-    const center = price > 0 ? price : strike || 100;
+    const center = currentPrice != null && currentPrice > 0 ? currentPrice : strike || 100;
     const points = 41;
     return Array.from({ length: points }, (_, i) => {
       const s = center * (0.75 + (i / (points - 1)) * 0.5);
@@ -132,7 +100,7 @@ export function StrikeDecisionPanel({
         plNegative: Math.min(pl, 0),
       };
     });
-  }, [price, strike, costBasis, shares, totalPremium, positionType]);
+  }, [currentPrice, strike, costBasis, shares, totalPremium, positionType]);
 
   if (!selection) {
     return (
@@ -223,22 +191,6 @@ export function StrikeDecisionPanel({
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-2">
-        {(["covered_call", "cash_secured_put"] as const).map((type) => (
-          <button
-            key={type}
-            onClick={() => setPositionType(type)}
-            className={`rounded-md border px-3 py-1.5 text-sm ${
-              positionType === type
-                ? "border-accent bg-accent/10 text-foreground"
-                : "border-border text-muted hover:text-foreground"
-            }`}
-          >
-            {type === "covered_call" ? "Covered Call" : "Cash-Secured Put"}
-          </button>
-        ))}
-      </div>
-
       {missingCostBasis ? (
         <p className="text-sm text-muted">
           Enter a cost basis above to see profit/loss for this covered call.
@@ -269,19 +221,6 @@ export function StrikeDecisionPanel({
               ℹ Shares currently below cost basis by {formatCurrency(underwaterBy)}.
             </p>
           )}
-
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-            <NumberField label="Current Price" value={price} onChange={setPrice} step={0.01} />
-            <NumberField label="Strike" value={strike} onChange={setStrike} step={0.5} />
-            <NumberField
-              label="Premium/Share"
-              value={premiumPerShare}
-              onChange={setPremiumPerShare}
-              step={0.01}
-            />
-            <NumberField label="DTE" value={dte} onChange={setDte} />
-            <NumberField label="Shares" value={shares} onChange={setShares} step={100} />
-          </div>
 
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <StatCard label="Max Profit" value={formatCurrency(maxProfit)} />
