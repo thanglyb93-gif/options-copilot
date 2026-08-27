@@ -49,8 +49,8 @@ export function QuoteHeader({ quote }: { quote: QuoteResponse }) {
         />
         <Stat label="% From 52w High" value={formatPercent(quote.percentFrom52wHigh)} />
         <Stat
-          label="P/E (T/F)"
-          value={`${quote.peRatioTrailing?.toFixed(1) ?? "—"} / ${quote.peRatioForward?.toFixed(1) ?? "—"}`}
+          label="P/E (Fwd/Trail)"
+          value={`${quote.peRatioForward?.toFixed(1) ?? "—"} / ${quote.peRatioTrailing?.toFixed(1) ?? "—"}`}
         />
         <Stat label="Market Cap" value={formatCompactNumber(quote.marketCap)} />
         <Stat

@@ -2,7 +2,11 @@ import { NextResponse } from "next/server";
 import { fetchTargetExpirationChain } from "@/lib/yahoo";
 import { getSupabaseRouteClient } from "@/lib/supabase";
 import { unreliableIvFlag } from "@/lib/flags";
-import { atmImpliedVolatility } from "@/lib/volatility";
+import {
+  atmImpliedVolatility,
+  historicalVolatility,
+  rollingHistoricalVolatility,
+} from "@/lib/volatility";
 import { gatherBriefingContext, getOrGenerateBriefing } from "@/lib/briefing-service";
 import { scoreTickerLevel, type TradeDirection } from "@/lib/entry-score";
 
@@ -39,7 +43,7 @@ export async function GET(
         .order("date", { ascending: true }),
     ]);
 
-    const { inputs, daysSinceLastEarnings, recentHeadlineCount } = context;
+    const { inputs, daysSinceLastEarnings, recentHeadlineCount, closes } = context;
 
     const { content: briefing } = await getOrGenerateBriefing(supabase, ticker, inputs, false);
 
@@ -56,9 +60,16 @@ export async function GET(
       .map((r) => r.implied_volatility_avg)
       .filter((v): v is number => typeof v === "number");
 
+    // Approximate stand-in while historicalValues is thin -- built purely
+    // from already-fetched daily closes, no extra data source needed.
+    const hvFallback = {
+      currentHv: historicalVolatility(closes, 30),
+      hvSeries: rollingHistoricalVolatility(closes, 30),
+    };
+
     const result = scoreTickerLevel(
       direction as TradeDirection,
-      { currentIv, historicalValues },
+      { currentIv, historicalValues, hvFallback },
       {
         lean: briefing.directionalLean.lean,
         rationale: briefing.directionalLean.rationale,

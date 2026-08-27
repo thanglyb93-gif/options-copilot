@@ -79,3 +79,24 @@ export function percentileRank(value: number, historical: number[]): number | nu
   const atOrBelow = historical.filter((v) => v <= value).length;
   return (atOrBelow / historical.length) * 100;
 }
+
+/**
+ * A trailing-`window`-day HV computed at each of the last `maxSamples`
+ * days, building a distribution purely from already-fetched daily
+ * closes -- no dependency on iv_history. Used as an approximate stand-in
+ * for a real IV percentile while iv_history is still thin (see
+ * lib/entry-score.ts's scoreIvComponent), since real daily price history
+ * is always available regardless of how long the app has been deployed.
+ */
+export function rollingHistoricalVolatility(
+  closes: CloseLike[],
+  window = 30,
+  maxSamples = 252
+): number[] {
+  const series: number[] = [];
+  for (let end = closes.length; end > window && series.length < maxSamples; end--) {
+    const hv = historicalVolatility(closes.slice(0, end), window);
+    if (hv != null) series.push(hv);
+  }
+  return series;
+}

@@ -19,7 +19,6 @@ import {
   coveredCallBreakeven,
   coveredCallPL,
 } from "@/lib/options-math";
-import { tierForTotal } from "@/lib/entry-score";
 import { formatCurrency, formatNumber, formatPercent } from "@/lib/format";
 import type { EntryScoreResponse } from "@/types/api";
 import type { ChainSelection } from "./options-chain";
@@ -60,12 +59,6 @@ function NumberField({
       />
     </label>
   );
-}
-
-function tierClasses(tier: string): string {
-  if (tier.startsWith("SELL")) return "text-accent";
-  if (tier === "CONSIDER SKIPPING") return "text-yellow-400";
-  return "text-red-400";
 }
 
 export function StrikeDecisionPanel({
@@ -146,9 +139,6 @@ export function StrikeDecisionPanel({
   }
 
   const tickerScore = selection.direction === "put" ? putScore : callScore;
-  const cushionScoreValue = selection.contract.cushionScore;
-  const fullTotal = tickerScore ? tickerScore.partialTotal + (cushionScoreValue ?? 0) : null;
-  const tier = fullTotal != null ? tierForTotal(fullTotal) : null;
   const opposesTradeDirection = tickerScore?.eventComponent.opposesTradeDirection ?? false;
 
   return (
@@ -174,8 +164,23 @@ export function StrikeDecisionPanel({
         <span className="text-muted">
           premium <span className="font-mono text-foreground">{formatCurrency(selection.premium)}</span>
         </span>
+        {selection.contract.usingLastPriceFallback && (
+          <span
+            className="text-xs text-muted"
+            title="Market is closed -- no live bid/ask. Using the last traded price and greeks estimated from it."
+          >
+            (last price as of market close, not live)
+          </span>
+        )}
       </div>
 
+      {/*
+        Total entry score intentionally NOT shown here -- the Entry Score
+        cards above are the single source of truth for that number (see
+        entry-score-panel.tsx's combineWithStrikeCushion), so it can't
+        disagree with what's shown there. This panel only surfaces detail
+        specific to the selected contract.
+      */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <StatCard
           label="Assignment Probability"
@@ -195,20 +200,6 @@ export function StrikeDecisionPanel({
               </span>
             )}
           </span>
-        </div>
-        <div className="flex flex-col gap-0.5 rounded-md border border-border bg-background px-3 py-2 sm:col-span-2">
-          <span className="text-[11px] uppercase tracking-wide text-muted">Entry Score</span>
-          {fullTotal != null && tier ? (
-            <div className="flex items-baseline gap-2">
-              <span className={`font-mono text-2xl font-semibold ${tierClasses(tier)}`}>
-                {fullTotal.toFixed(1)}
-              </span>
-              <span className="text-muted">/ 6</span>
-              <span className={`text-xs font-medium ${tierClasses(tier)}`}>{tier}</span>
-            </div>
-          ) : (
-            <span className="text-sm text-muted">Loading ticker-level score…</span>
-          )}
         </div>
       </div>
 

@@ -12,9 +12,10 @@ import {
   blackScholesTheta,
   findClosestDteIndex,
   assignmentProbabilityLabel,
+  impliedVolatilityFromPrice,
   type OptionType,
 } from "@/lib/options-math";
-import { deltaBandFlag, dteBandFlag, unreliableIvFlag } from "@/lib/flags";
+import { assessContractReliability, deltaBandFlag, dteBandFlag, unreliableIvFlag } from "@/lib/flags";
 import { atmImpliedVolatility } from "@/lib/volatility";
 import { expectedMove, strikeCushion, cushionScore } from "@/lib/expected-move";
 import {
@@ -31,19 +32,44 @@ function mapContract(
   optionType: OptionType,
   underlyingPrice: number | undefined,
   dte: number,
-  operativeRef: OperativeReference | null
+  operativeRef: OperativeReference | null,
+  marketState: string | undefined
 ) {
-  const ivUnreliable = unreliableIvFlag(contract);
+  const reliability = assessContractReliability(contract, marketState);
+  let ivUnreliable = reliability.unreliable;
+  let usingLastPriceFallback = reliability.usingLastPriceFallback;
+  let effectiveIv = contract.impliedVolatility ?? null;
 
-  const canComputeGreeks =
-    !ivUnreliable && underlyingPrice != null && contract.impliedVolatility != null;
+  if (usingLastPriceFallback && underlyingPrice != null && contract.lastPrice != null) {
+    // Yahoo's own impliedVolatility field is frequently a degenerate
+    // placeholder (e.g. ~0.00001) when there's no live bid/ask, which
+    // would otherwise produce nonsense Greeks (delta pinned to 1, etc).
+    // Solve for the volatility that actually reproduces lastPrice instead.
+    const solvedIv = impliedVolatilityFromPrice({
+      spot: underlyingPrice,
+      strike: contract.strike,
+      dte,
+      targetPrice: contract.lastPrice,
+      optionType,
+    });
+    if (solvedIv != null) {
+      effectiveIv = solvedIv;
+    } else {
+      // lastPrice can't be reconciled with any plausible volatility (e.g.
+      // stale from before a large move) -- no estimate would be honest.
+      ivUnreliable = true;
+      usingLastPriceFallback = false;
+    }
+  }
+
+  const canComputeGreeks = !ivUnreliable && underlyingPrice != null && effectiveIv != null;
 
   const greeksInput = canComputeGreeks
     ? {
         spot: underlyingPrice!,
         strike: contract.strike,
         dte,
-        volatility: contract.impliedVolatility,
+        volatility: effectiveIv!,
         optionType,
       }
     : null;
@@ -54,7 +80,7 @@ function mapContract(
   let emCushion: number | null = null;
   let cushionScoreValue: number | null = null;
   if (canComputeGreeks) {
-    const em = expectedMove(underlyingPrice!, contract.impliedVolatility, dte);
+    const em = expectedMove(underlyingPrice!, effectiveIv!, dte);
     emCushion = strikeCushion(underlyingPrice!, contract.strike, em, optionType);
     cushionScoreValue = cushionScore(emCushion);
   }
@@ -64,10 +90,12 @@ function mapContract(
     strike: contract.strike,
     bid: contract.bid ?? null,
     ask: contract.ask ?? null,
+    lastPrice: contract.lastPrice ?? null,
     volume: contract.volume ?? null,
     openInterest: contract.openInterest ?? null,
-    impliedVolatility: contract.impliedVolatility ?? null,
+    impliedVolatility: effectiveIv,
     ivUnreliable,
+    usingLastPriceFallback,
     delta,
     theta,
     inTargetBand:
@@ -113,10 +141,10 @@ export async function GET(
         expirationDate: expiration.expirationDate.toISOString().slice(0, 10),
         dte,
         calls: expiration.calls.map((c) =>
-          mapContract(c, "call", chain.underlyingPrice, dte, resistanceRef)
+          mapContract(c, "call", chain.underlyingPrice, dte, resistanceRef, chain.marketState)
         ),
         puts: expiration.puts.map((p) =>
-          mapContract(p, "put", chain.underlyingPrice, dte, supportRef)
+          mapContract(p, "put", chain.underlyingPrice, dte, supportRef, chain.marketState)
         ),
       };
     });
@@ -141,6 +169,7 @@ export async function GET(
     return NextResponse.json({
       ticker,
       underlyingPrice: chain.underlyingPrice ?? null,
+      marketState: chain.marketState ?? null,
       frontMonthAtmIv,
       defaultExpirationIndex: targetIndex,
       expirations,

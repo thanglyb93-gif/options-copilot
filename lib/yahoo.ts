@@ -124,6 +124,7 @@ export interface ExpirationChain {
 export interface OptionsChainResult {
   underlyingSymbol: string;
   underlyingPrice: number | undefined;
+  marketState: string | undefined;
   expirations: ExpirationChain[];
 }
 
@@ -160,6 +161,7 @@ export async function fetchOptionsChainWithinDays(
   return {
     underlyingSymbol: base.underlyingSymbol,
     underlyingPrice: base.quote?.regularMarketPrice,
+    marketState: base.quote?.marketState,
     expirations: perExpiration,
   };
 }

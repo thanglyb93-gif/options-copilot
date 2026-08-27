@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { getSupabaseRouteClient } from "@/lib/supabase";
-import { fetchNearestExpirationChain, fetchHistoricalCloses } from "@/lib/yahoo";
+import { fetchTargetExpirationChain, fetchHistoricalCloses } from "@/lib/yahoo";
 import { atmImpliedVolatility, historicalVolatility } from "@/lib/volatility";
+import { unreliableIvFlag } from "@/lib/flags";
 
 interface SnapshotResult {
   ticker: string;
@@ -25,8 +26,12 @@ async function runSnapshot(): Promise<{ date: string; results: SnapshotResult[] 
 
   for (const { ticker } of watchlist ?? []) {
     try {
+      // Front-month (~37 DTE, the 30-45 DTE band this app screens for) --
+      // not the literal nearest expiration, which is frequently a dead
+      // weekly with no real market and garbage near-zero IV (same issue
+      // fixed elsewhere in /api/options and /api/watchlist-summary).
       const [chain, closes] = await Promise.all([
-        fetchNearestExpirationChain(ticker),
+        fetchTargetExpirationChain(ticker),
         fetchHistoricalCloses(ticker, 45),
       ]);
 
@@ -37,8 +42,8 @@ async function runSnapshot(): Promise<{ date: string; results: SnapshotResult[] 
 
       const iv = atmImpliedVolatility({
         underlyingPrice: chain.underlyingPrice,
-        calls: chain.calls,
-        puts: chain.puts,
+        calls: chain.calls.filter((c) => !unreliableIvFlag(c)),
+        puts: chain.puts.filter((p) => !unreliableIvFlag(p)),
       });
       const hv = historicalVolatility(closes, 30);
 

@@ -40,10 +40,13 @@ export interface ContractRow {
   strike: number;
   bid: number | null;
   ask: number | null;
+  lastPrice: number | null;
   volume: number | null;
   openInterest: number | null;
   impliedVolatility: number | null;
   ivUnreliable: boolean;
+  /** No live bid/ask because the market's closed -- lastPrice is standing in. */
+  usingLastPriceFallback: boolean;
   delta: number | null;
   theta: number | null;
   inTargetBand: boolean;
@@ -63,6 +66,7 @@ export interface ExpirationChain {
 export interface OptionsResponse {
   ticker: string;
   underlyingPrice: number | null;
+  marketState: string | null;
   frontMonthAtmIv: number | null;
   defaultExpirationIndex: number;
   expirations: ExpirationChain[];
@@ -165,6 +169,8 @@ export interface IvComponentResult {
   score: number | null;
   percentile: number | null;
   note?: string;
+  isApproximation: boolean;
+  realHistoryCount: number;
 }
 
 export interface EventComponentResult {

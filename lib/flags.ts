@@ -84,3 +84,45 @@ export function unreliableIvFlag(
 
   return false;
 }
+
+export interface ChainContractQuoteLike extends ContractQuoteLike {
+  lastPrice?: number | null;
+}
+
+export interface ContractReliability {
+  /** Genuinely no usable pricing signal -- flag it in the UI as before. */
+  unreliable: boolean;
+  /**
+   * No live bid/ask, but the market is closed (so that's expected) and
+   * there's a real last-traded price to fall back on for premium/greeks.
+   */
+  usingLastPriceFallback: boolean;
+}
+
+/**
+ * Market-hours-aware version of unreliableIvFlag, used for the options
+ * chain table. A contract with no live bid/ask is only "unreliable" if the
+ * market is actually open right now (a real data-quality problem) -- when
+ * the market is closed, zeroed-out bid/ask is expected, and the contract's
+ * lastPrice (if any) is used as a best-effort stand-in instead of flagging
+ * the row broken.
+ */
+export function assessContractReliability(
+  contract: ChainContractQuoteLike,
+  marketState: string | undefined,
+  threshold = 2.0
+): ContractReliability {
+  const hasLiveMarket = (contract.bid ?? 0) > 0 && (contract.ask ?? 0) > 0;
+  const marketOpen = marketState === "REGULAR";
+  const hasLastPriceFallback =
+    !hasLiveMarket && !marketOpen && (contract.lastPrice ?? 0) > 0;
+
+  if (!hasLiveMarket && !hasLastPriceFallback) {
+    return { unreliable: true, usingLastPriceFallback: false };
+  }
+
+  const iv = contract.impliedVolatility;
+  const ivSane = iv != null && iv > 0 && iv <= threshold;
+
+  return { unreliable: !ivSane, usingLastPriceFallback: hasLastPriceFallback };
+}

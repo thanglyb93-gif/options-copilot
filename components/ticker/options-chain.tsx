@@ -14,12 +14,23 @@ export interface ChainSelection {
   contract: ContractRow;
 }
 
-function midPrice(row: ContractRow): number | null {
+function referencePremium(row: ContractRow): number | null {
+  if (row.usingLastPriceFallback && row.lastPrice != null) return row.lastPrice;
   if (row.bid != null && row.ask != null) return (row.bid + row.ask) / 2;
   return row.ask ?? row.bid ?? null;
 }
 
 function ivCell(row: ContractRow) {
+  if (row.usingLastPriceFallback) {
+    return (
+      <span
+        className="text-muted"
+        title="Market is closed -- no live bid/ask. Showing the last traded price and an IV/greeks estimate derived from it."
+      >
+        Last: {formatCurrency(row.lastPrice)} (as of close)
+      </span>
+    );
+  }
   if (row.impliedVolatility == null) return <span className="text-muted">—</span>;
   if (row.ivUnreliable) return <span className="text-muted" title="Implausible IV from source data">unreliable</span>;
   return <span>{formatPercent(row.impliedVolatility * 100, 0)}</span>;
@@ -87,7 +98,7 @@ export function OptionsChain({
   }
 
   function selectCall(strike: number, call: ContractRow) {
-    const premium = midPrice(call);
+    const premium = referencePremium(call);
     if (premium == null || !expiration) return;
     onSelectContract({
       positionType: "covered_call",
@@ -101,7 +112,7 @@ export function OptionsChain({
   }
 
   function selectPut(strike: number, put: ContractRow) {
-    const premium = midPrice(put);
+    const premium = referencePremium(put);
     if (premium == null || !expiration) return;
     onSelectContract({
       positionType: "cash_secured_put",

@@ -91,6 +91,69 @@ export function blackScholesTheta(input: BlackScholesInput): number {
   return thetaPerYear / 365;
 }
 
+/** Black-Scholes option value (not delta/theta) for a given volatility. */
+export function blackScholesPrice(input: BlackScholesInput): number {
+  const { spot, strike, optionType } = input;
+  if (input.dte <= 0 || input.volatility <= 0) {
+    return optionType === "call" ? Math.max(spot - strike, 0) : Math.max(strike - spot, 0);
+  }
+
+  const r = input.riskFreeRate ?? 0.04;
+  const q = input.dividendYield ?? 0;
+  const { d1, d2, t } = d1d2(input);
+  const discQ = Math.exp(-q * t);
+  const discR = Math.exp(-r * t);
+
+  return optionType === "call"
+    ? spot * discQ * normCdf(d1) - strike * discR * normCdf(d2)
+    : strike * discR * normCdf(-d2) - spot * discQ * normCdf(-d1);
+}
+
+export interface ImpliedVolatilityFromPriceInput {
+  spot: number;
+  strike: number;
+  dte: number;
+  targetPrice: number;
+  optionType: OptionType;
+  riskFreeRate?: number;
+  dividendYield?: number;
+}
+
+/**
+ * Solves for the volatility that reproduces `targetPrice` via Black-Scholes
+ * (bisection -- BS price is monotonic increasing in volatility). Used as a
+ * best-effort IV estimate for contracts whose reported impliedVolatility
+ * can't be trusted (e.g. Yahoo returns a near-zero placeholder when a
+ * contract has no live bid/ask), using the contract's lastPrice instead.
+ * Returns null if targetPrice can't be reconciled with any volatility in a
+ * plausible 1%-400% range -- e.g. a stale lastPrice from well before a
+ * large move in the underlying, where no estimate would be meaningful.
+ */
+export function impliedVolatilityFromPrice(
+  input: ImpliedVolatilityFromPriceInput
+): number | null {
+  const { spot, strike, dte, targetPrice, optionType, riskFreeRate, dividendYield } = input;
+  if (dte <= 0 || targetPrice <= 0 || spot <= 0) return null;
+
+  const priceAt = (vol: number) =>
+    blackScholesPrice({ spot, strike, dte, volatility: vol, optionType, riskFreeRate, dividendYield });
+
+  const minVol = 0.01;
+  const maxVol = 4.0;
+  if (targetPrice <= priceAt(minVol) || targetPrice >= priceAt(maxVol)) return null;
+
+  let lo = minVol;
+  let hi = maxVol;
+  for (let i = 0; i < 50; i++) {
+    const mid = (lo + hi) / 2;
+    const price = priceAt(mid);
+    if (Math.abs(price - targetPrice) < 0.0005) return mid;
+    if (price < targetPrice) lo = mid;
+    else hi = mid;
+  }
+  return (lo + hi) / 2;
+}
+
 /** Downside breakeven price for a covered call, per share. */
 export function coveredCallBreakeven(costBasis: number, premiumPerShare: number): number {
   return costBasis - premiumPerShare;

@@ -27,6 +27,14 @@ export async function GET(
         ? ((price - fiftyTwoWeekHigh) / fiftyTwoWeekHigh) * 100
         : null;
 
+    // A negative P/E (unprofitable company, or a negative forward-earnings
+    // estimate) isn't a meaningful multiple -- surface it as unavailable
+    // rather than a confusing negative number.
+    const peRatioTrailing =
+      quote.trailingPE != null && quote.trailingPE > 0 ? quote.trailingPE : null;
+    const peRatioForward =
+      quote.forwardPE != null && quote.forwardPE > 0 ? quote.forwardPE : null;
+
     return NextResponse.json({
       ticker,
       price,
@@ -35,8 +43,8 @@ export async function GET(
       fiftyTwoWeekHigh,
       fiftyTwoWeekLow: quote.fiftyTwoWeekLow ?? null,
       percentFrom52wHigh,
-      peRatioTrailing: quote.trailingPE ?? null,
-      peRatioForward: quote.forwardPE ?? null,
+      peRatioTrailing,
+      peRatioForward,
       marketCap: quote.marketCap ?? null,
       dividendYield: quote.dividendYield ?? null,
       nextExDividendDate: extras.dividendCalendar.exDividendDate ?? null,

@@ -1,7 +1,7 @@
 "use client";
 
 import type { FetchState } from "@/lib/use-json-fetch";
-import { tierForTotal } from "@/lib/entry-score";
+import { combineWithStrikeCushion } from "@/lib/entry-score";
 import type { EntryScoreResponse } from "@/types/api";
 import { SkeletonLines, ErrorNote } from "./section";
 import type { ChainSelection } from "./options-chain";
@@ -37,6 +37,26 @@ function ComponentRow({ label, detail }: { label: string; detail: string }) {
   );
 }
 
+function ivPercentileDetail(data: EntryScoreResponse): string {
+  const iv = data.ivComponent;
+  if (iv.score == null) return `— (${iv.note ?? "unavailable"})`;
+  const prefix = iv.isApproximation ? "~" : "";
+  const suffix = iv.isApproximation ? ` (${iv.note})` : "";
+  return `${iv.score.toFixed(1)} (${prefix}${ordinal(iv.percentile ?? 0)} percentile${suffix})`;
+}
+
+function technicalDetail(matchedSelection: ChainSelection | null): string {
+  if (!matchedSelection) return "— (select a strike below)";
+  const { contract, strike } = matchedSelection;
+  if (contract.cushionScore == null) return `— (unavailable for strike ${strike})`;
+  const emText =
+    contract.emCushion != null ? `${contract.emCushion.toFixed(2)}x expected move` : "expected move unavailable";
+  const structural = contract.structuralConfirmation?.confirmed
+    ? `, ${matchedSelection.direction === "put" ? "below" : "above"} ${contract.structuralConfirmation.referenceLabel}`
+    : "";
+  return `${contract.cushionScore.toFixed(1)} (${emText}${structural})`;
+}
+
 function EntryScoreCard({
   label,
   direction,
@@ -52,13 +72,8 @@ function EntryScoreCard({
   const matchedSelection = selection && selection.direction === direction ? selection : null;
   const cushionScoreValue = matchedSelection?.contract.cushionScore ?? null;
 
-  const total = data
-    ? matchedSelection
-      ? data.partialTotal + (cushionScoreValue ?? 0)
-      : data.partialTotal
-    : null;
+  const combined = data ? combineWithStrikeCushion(data.partialTotal, matchedSelection ? cushionScoreValue : null) : null;
   const isComplete = matchedSelection != null && data != null;
-  const tier = isComplete && total != null ? tierForTotal(total) : null;
 
   return (
     <div className="flex flex-col gap-3 rounded-lg border border-border bg-background p-4">
@@ -67,7 +82,7 @@ function EntryScoreCard({
       {loading && <SkeletonLines count={4} />}
       {error && <ErrorNote message={error} />}
 
-      {data && (
+      {data && combined && (
         <>
           {data.eventComponent.opposesTradeDirection && (
             <div className="rounded-md border border-red-500/60 bg-red-500/15 px-3 py-2 text-sm font-medium text-red-300">
@@ -75,18 +90,18 @@ function EntryScoreCard({
             </div>
           )}
 
-          {tier ? (
+          {isComplete ? (
             <>
               <div className="flex items-baseline gap-2">
-                <span className={`font-mono text-3xl font-semibold ${tierClasses(tier).text}`}>
-                  {total!.toFixed(1)}
+                <span className={`font-mono text-3xl font-semibold ${tierClasses(combined.tier).text}`}>
+                  {combined.total.toFixed(1)}
                 </span>
                 <span className="text-muted">/ 6</span>
               </div>
               <span
-                className={`w-fit rounded border px-2 py-0.5 text-xs font-medium ${tierClasses(tier).text} ${tierClasses(tier).border}`}
+                className={`w-fit rounded border px-2 py-0.5 text-xs font-medium ${tierClasses(combined.tier).text} ${tierClasses(combined.tier).border}`}
               >
-                {tier}
+                {combined.tier}
               </span>
             </>
           ) : (
@@ -102,30 +117,14 @@ function EntryScoreCard({
           )}
 
           <div className="flex flex-col gap-1.5 border-t border-border pt-3">
-            <ComponentRow
-              label="IV Percentile"
-              detail={
-                data.ivComponent.score != null
-                  ? `${data.ivComponent.score.toFixed(1)} (${ordinal(data.ivComponent.percentile ?? 0)} percentile)`
-                  : `— (${data.ivComponent.note ?? "unavailable"})`
-              }
-            />
+            <ComponentRow label="IV Percentile" detail={ivPercentileDetail(data)} />
+            <ComponentRow label="Technical" detail={technicalDetail(matchedSelection)} />
             <ComponentRow
               label="Events"
               detail={`${(data.eventComponent.catalystScore + data.eventComponent.alignmentScore).toFixed(1)} (catalyst: ${
                 data.eventComponent.catalystScore > 0 ? "yes" : "no"
               }, lean: ${data.eventComponent.lean})`}
             />
-            {matchedSelection && (
-              <ComponentRow
-                label="Strike Cushion"
-                detail={
-                  cushionScoreValue != null
-                    ? `${cushionScoreValue.toFixed(1)} (strike ${matchedSelection.strike})`
-                    : `— (unavailable for strike ${matchedSelection.strike})`
-                }
-              />
-            )}
           </div>
         </>
       )}
