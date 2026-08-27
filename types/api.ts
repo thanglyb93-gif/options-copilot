@@ -118,6 +118,19 @@ export interface IvHistoryResponse {
   rows: { date: string; implied_volatility_avg: number | null; trailing_30d_hv: number | null }[];
 }
 
+export interface PositionSummary {
+  id: string;
+  ticker: string;
+  position_type: "covered_call" | "cash_secured_put";
+  shares_owned: number | null;
+  cost_basis: number | null;
+  status: "open" | "closed" | "assigned" | "expired";
+}
+
+export interface PositionsListResponse {
+  positions: PositionSummary[];
+}
+
 export interface WatchlistRow {
   id: string;
   ticker: string;

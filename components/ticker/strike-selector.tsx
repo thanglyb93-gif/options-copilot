@@ -1,7 +1,12 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import type { ContractRow, MaxPainResponse, OptionsResponse } from "@/types/api";
+import type {
+  ContractRow,
+  MaxPainResponse,
+  OptionsResponse,
+  PositionsListResponse,
+} from "@/types/api";
 import { formatMonthDay } from "@/lib/format";
 
 export interface StrikeSelection {
@@ -12,6 +17,8 @@ export interface StrikeSelection {
   dte: number;
   expirationDate: string;
   contract: ContractRow;
+  /** Per-share price paid for the shares backing a covered call. Null for puts (n/a) or when not yet entered. */
+  costBasis: number | null;
 }
 
 function referencePremium(row: ContractRow): number | null {
@@ -21,11 +28,13 @@ function referencePremium(row: ContractRow): number | null {
 }
 
 export function StrikeSelector({
+  symbol,
   options,
   underlyingPrice,
   maxPain,
   onSelectionChange,
 }: {
+  symbol: string;
   options: OptionsResponse;
   underlyingPrice: number | null;
   maxPain: MaxPainResponse | null;
@@ -34,6 +43,46 @@ export function StrikeSelector({
   const [expirationIndex, setExpirationIndex] = useState(options.defaultExpirationIndex);
   const [strike, setStrike] = useState<number | null>(null);
   const [direction, setDirection] = useState<"put" | "call">("call");
+
+  const [costBasisInput, setCostBasisInput] = useState("");
+  const [costBasisFromPosition, setCostBasisFromPosition] = useState(false);
+
+  // Prefill cost basis from a tracked open position for this ticker, if one
+  // exists with shares -- otherwise leave it blank for manual entry.
+  useEffect(() => {
+    let cancelled = false;
+    setCostBasisInput("");
+    setCostBasisFromPosition(false);
+
+    fetch(`/api/positions?status=open`)
+      .then((res) => res.json())
+      .then((body: PositionsListResponse) => {
+        if (cancelled) return;
+        const match = body.positions?.find(
+          (p) =>
+            p.ticker === symbol.toUpperCase() &&
+            (p.shares_owned ?? 0) > 0 &&
+            p.cost_basis != null
+        );
+        if (match && match.cost_basis != null) {
+          setCostBasisInput(String(match.cost_basis));
+          setCostBasisFromPosition(true);
+        }
+      })
+      .catch(() => {
+        // No tracked position available -- fall back to manual entry.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [symbol]);
+
+  const costBasis = useMemo(() => {
+    if (costBasisInput.trim() === "") return null;
+    const parsed = Number(costBasisInput);
+    return Number.isFinite(parsed) ? parsed : null;
+  }, [costBasisInput]);
 
   const expiration = options.expirations[expirationIndex];
 
@@ -90,9 +139,10 @@ export function StrikeSelector({
       dte: expiration.dte,
       expirationDate: expiration.expirationDate,
       contract,
+      costBasis: direction === "call" ? costBasis : null,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [expiration, strike, direction, contract]);
+  }, [expiration, strike, direction, contract, costBasis]);
 
   if (options.expirations.length === 0) {
     return <p className="text-sm text-muted">No expirations available.</p>;
@@ -156,6 +206,26 @@ export function StrikeSelector({
             ))}
           </div>
         </div>
+
+        {direction === "call" && (
+          <label className="flex flex-col gap-1 text-xs text-muted">
+            Cost Basis
+            <input
+              type="number"
+              step="0.01"
+              value={costBasisInput}
+              onChange={(e) => {
+                setCostBasisInput(e.target.value);
+                setCostBasisFromPosition(false);
+              }}
+              placeholder="e.g. 231.00"
+              className="w-28 rounded-md border border-border bg-background px-2 py-1.5 text-sm text-foreground"
+            />
+            {costBasisFromPosition && (
+              <span className="text-[10px] normal-case text-muted">from your tracked position</span>
+            )}
+          </label>
+        )}
       </div>
 
       {maxPainStrike != null ? (

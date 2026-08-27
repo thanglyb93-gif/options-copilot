@@ -64,6 +64,7 @@ export function TickerDashboard({ symbol }: { symbol: string }) {
           {options.error && <ErrorNote message={options.error} />}
           {options.data && (
             <StrikeSelector
+              symbol={symbol}
               options={options.data}
               underlyingPrice={quote.data?.price ?? options.data.underlyingPrice}
               maxPain={maxPain.data}

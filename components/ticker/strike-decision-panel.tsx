@@ -78,7 +78,6 @@ export function StrikeDecisionPanel({
   const [premiumPerShare, setPremiumPerShare] = useState<number>(0);
   const [dte, setDte] = useState<number>(0);
   const [shares, setShares] = useState<number>(100);
-  const [costBasis, setCostBasis] = useState<number>(0);
 
   useEffect(() => {
     if (!selection) return;
@@ -88,22 +87,27 @@ export function StrikeDecisionPanel({
     setDte(selection.dte);
     const fallback = currentPrice ?? selection.strike;
     setPrice((prev) => prev || fallback);
-    setCostBasis((prev) => prev || fallback);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selection]);
 
+  // Cost basis is owned by the Strike Selector's dedicated field (tracked
+  // position prefill or manual entry) -- this panel only displays what it
+  // computes from it, it doesn't offer a second, independently-editable
+  // copy of the same number.
+  const costBasis = selection?.costBasis ?? null;
+
   const totalPremium = premiumPerShare * shares;
   const capitalAtRisk =
-    positionType === "covered_call" ? costBasis * shares : strike * shares;
+    positionType === "covered_call" ? (costBasis ?? 0) * shares : strike * shares;
 
   const maxProfit =
     positionType === "covered_call"
-      ? coveredCallPL(strike, strike, costBasis, shares, totalPremium)
+      ? coveredCallPL(strike, strike, costBasis ?? 0, shares, totalPremium)
       : cashSecuredPutPL(strike, strike, totalPremium, shares);
 
   const breakeven =
     positionType === "covered_call"
-      ? coveredCallBreakeven(costBasis, premiumPerShare)
+      ? coveredCallBreakeven(costBasis ?? 0, premiumPerShare)
       : cashSecuredPutBreakeven(strike, premiumPerShare);
 
   const returnIfOtm = capitalAtRisk > 0 ? (totalPremium / capitalAtRisk) * 100 : null;
@@ -119,7 +123,7 @@ export function StrikeDecisionPanel({
       const s = center * (0.75 + (i / (points - 1)) * 0.5);
       const pl =
         positionType === "covered_call"
-          ? coveredCallPL(s, strike, costBasis, shares, totalPremium)
+          ? coveredCallPL(s, strike, costBasis ?? 0, shares, totalPremium)
           : cashSecuredPutPL(s, strike, totalPremium, shares);
       return {
         price: Math.round(s * 100) / 100,
@@ -140,6 +144,22 @@ export function StrikeDecisionPanel({
 
   const tickerScore = selection.direction === "put" ? putScore : callScore;
   const opposesTradeDirection = tickerScore?.eventComponent.opposesTradeDirection ?? false;
+
+  const missingCostBasis = positionType === "covered_call" && costBasis == null;
+
+  const netPosition =
+    positionType === "covered_call" && costBasis != null && currentPrice != null
+      ? {
+          stockPL: (currentPrice - costBasis) * shares,
+          optionPL: totalPremium,
+          net: (currentPrice - costBasis) * shares + totalPremium,
+        }
+      : null;
+
+  const underwaterBy =
+    positionType === "covered_call" && costBasis != null && currentPrice != null && costBasis > currentPrice
+      ? costBasis - currentPrice
+      : null;
 
   return (
     <div className="flex flex-col gap-4">
@@ -219,87 +239,117 @@ export function StrikeDecisionPanel({
         ))}
       </div>
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-        <NumberField label="Current Price" value={price} onChange={setPrice} step={0.01} />
-        <NumberField label="Strike" value={strike} onChange={setStrike} step={0.5} />
-        <NumberField
-          label="Premium/Share"
-          value={premiumPerShare}
-          onChange={setPremiumPerShare}
-          step={0.01}
-        />
-        <NumberField label="DTE" value={dte} onChange={setDte} />
-        <NumberField label="Shares" value={shares} onChange={setShares} step={100} />
-        {positionType === "covered_call" && (
-          <NumberField label="Cost Basis" value={costBasis} onChange={setCostBasis} step={0.01} />
-        )}
-      </div>
+      {missingCostBasis ? (
+        <p className="text-sm text-muted">
+          Enter a cost basis above to see profit/loss for this covered call.
+        </p>
+      ) : (
+        <>
+          {netPosition && (
+            <div className="flex flex-col gap-1 rounded-md border border-accent/40 bg-accent/5 px-4 py-3">
+              <span className="text-[11px] uppercase tracking-wide text-muted">
+                Net Covered-Position P/L
+              </span>
+              <span
+                className={`font-mono text-3xl font-bold ${
+                  netPosition.net >= 0 ? "text-accent" : "text-red-400"
+                }`}
+              >
+                {formatCurrency(netPosition.net)}
+              </span>
+              <span className="text-xs text-muted">
+                Stock {formatCurrency(netPosition.stockPL)} + option leg (premium){" "}
+                <span className="font-mono">{formatCurrency(netPosition.optionPL)}</span>
+              </span>
+            </div>
+          )}
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <StatCard label="Max Profit" value={formatCurrency(maxProfit)} />
-        <StatCard label="Breakeven" value={formatCurrency(breakeven)} />
-        <StatCard label="Return if OTM" value={formatPercent(returnIfOtm)} />
-        <StatCard label="Annualized Return" value={formatPercent(annualized)} />
-      </div>
+          {underwaterBy != null && (
+            <p className="text-xs text-muted">
+              ℹ Shares currently below cost basis by {formatCurrency(underwaterBy)}.
+            </p>
+          )}
 
-      <div className="h-64 w-full">
-        <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart data={chartData} margin={{ top: 8, right: 16, bottom: 0, left: 0 }}>
-            <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" />
-            <XAxis
-              dataKey="price"
-              stroke="var(--muted)"
-              tick={{ fontSize: 11, fill: "var(--muted)" }}
-              tickFormatter={(v) => formatCurrency(v, 0)}
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+            <NumberField label="Current Price" value={price} onChange={setPrice} step={0.01} />
+            <NumberField label="Strike" value={strike} onChange={setStrike} step={0.5} />
+            <NumberField
+              label="Premium/Share"
+              value={premiumPerShare}
+              onChange={setPremiumPerShare}
+              step={0.01}
             />
-            <YAxis
-              stroke="var(--muted)"
-              tick={{ fontSize: 11, fill: "var(--muted)" }}
-              tickFormatter={(v) => formatCurrency(v, 0)}
-            />
-            <Tooltip
-              contentStyle={{
-                background: "var(--surface)",
-                border: "1px solid var(--border)",
-                fontSize: 12,
-              }}
-              formatter={(value) => formatCurrency(Number(value))}
-              labelFormatter={(label) => `Price: ${formatCurrency(Number(label))}`}
-            />
-            <ReferenceLine y={0} stroke="var(--muted)" />
-            <ReferenceLine
-              x={breakeven}
-              stroke="var(--foreground)"
-              strokeDasharray="4 4"
-              label={{ value: "BE", fill: "var(--muted)", fontSize: 11 }}
-            />
-            <Area
-              type="monotone"
-              dataKey="plPositive"
-              stroke="none"
-              fill="var(--accent)"
-              fillOpacity={0.25}
-              isAnimationActive={false}
-            />
-            <Area
-              type="monotone"
-              dataKey="plNegative"
-              stroke="none"
-              fill="#f87171"
-              fillOpacity={0.25}
-              isAnimationActive={false}
-            />
-            <Line
-              type="monotone"
-              dataKey="pl"
-              stroke="var(--foreground)"
-              strokeWidth={1.5}
-              dot={false}
-              isAnimationActive={false}
-            />
-          </ComposedChart>
-        </ResponsiveContainer>
-      </div>
+            <NumberField label="DTE" value={dte} onChange={setDte} />
+            <NumberField label="Shares" value={shares} onChange={setShares} step={100} />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <StatCard label="Max Profit" value={formatCurrency(maxProfit)} />
+            <StatCard label="Breakeven" value={formatCurrency(breakeven)} />
+            <StatCard label="Return if OTM" value={formatPercent(returnIfOtm)} />
+            <StatCard label="Annualized Return" value={formatPercent(annualized)} />
+          </div>
+
+          <div className="h-64 w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart data={chartData} margin={{ top: 8, right: 16, bottom: 0, left: 0 }}>
+                <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" />
+                <XAxis
+                  dataKey="price"
+                  stroke="var(--muted)"
+                  tick={{ fontSize: 11, fill: "var(--muted)" }}
+                  tickFormatter={(v) => formatCurrency(v, 0)}
+                />
+                <YAxis
+                  stroke="var(--muted)"
+                  tick={{ fontSize: 11, fill: "var(--muted)" }}
+                  tickFormatter={(v) => formatCurrency(v, 0)}
+                />
+                <Tooltip
+                  contentStyle={{
+                    background: "var(--surface)",
+                    border: "1px solid var(--border)",
+                    fontSize: 12,
+                  }}
+                  formatter={(value) => formatCurrency(Number(value))}
+                  labelFormatter={(label) => `Price: ${formatCurrency(Number(label))}`}
+                />
+                <ReferenceLine y={0} stroke="var(--muted)" />
+                <ReferenceLine
+                  x={breakeven}
+                  stroke="var(--foreground)"
+                  strokeDasharray="4 4"
+                  label={{ value: "BE", fill: "var(--muted)", fontSize: 11 }}
+                />
+                <Area
+                  type="monotone"
+                  dataKey="plPositive"
+                  stroke="none"
+                  fill="var(--accent)"
+                  fillOpacity={0.25}
+                  isAnimationActive={false}
+                />
+                <Area
+                  type="monotone"
+                  dataKey="plNegative"
+                  stroke="none"
+                  fill="#f87171"
+                  fillOpacity={0.25}
+                  isAnimationActive={false}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="pl"
+                  stroke="var(--foreground)"
+                  strokeWidth={1.5}
+                  dot={false}
+                  isAnimationActive={false}
+                />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+        </>
+      )}
     </div>
   );
 }
