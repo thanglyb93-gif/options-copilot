@@ -14,6 +14,8 @@ import {
   HV_FALLBACK_MIN_SAMPLES,
   IV_HISTORY_MIN_ROWS,
   IV_PERCENTILE_BANDS,
+  SKEW_SCORE_BANDS,
+  SKEW_UNFAVORABLE_SCORE,
   TIER_BANDS,
 } from "./entry-score";
 import { CUSHION_SCORE_BANDS } from "./expected-move";
@@ -22,6 +24,12 @@ import { SPREAD_MODERATE_MAX_PCT, SPREAD_TIGHT_MAX_PCT } from "./options-math";
 import { SKEW_FLAT_THRESHOLD, TERM_STRUCTURE_THRESHOLD_PCT } from "./volatility";
 import { RSI_OVERBOUGHT_THRESHOLD, RSI_OVERSOLD_THRESHOLD, RSI_PERIOD } from "./trend";
 import { MIN_OPEN_POSITIONS_FOR_PORTFOLIO_SUMMARY } from "./portfolio-analytics";
+import {
+  PRIMARY_LOOKBACK_DAYS,
+  STRUCTURAL_TREND_LOOKBACK_DAYS,
+  SUITABILITY_OUTPERFORM_THRESHOLD_PCT,
+  SUITABILITY_UNDERPERFORM_THRESHOLD_PCT,
+} from "./relative-strength";
 import {
   DTE_SECONDARY_TRIGGER_MAX,
   DTE_SECONDARY_TRIGGER_MIN,
@@ -77,7 +85,8 @@ function formatBands<T extends { min: number }>(bands: readonly T[], axisLabel: 
 
 const ivBandsText = formatBands(IV_PERCENTILE_BANDS, "percentile", (b) => `${b.score.toFixed(1)} pts`);
 const cushionBandsText = formatBands(CUSHION_SCORE_BANDS, "EM multiple", (b) => `${b.score.toFixed(1)} pts`);
-const tierBandsText = formatBands(TIER_BANDS, "total (0-6)", (b) => b.tier);
+const tierBandsText = formatBands(TIER_BANDS, "total (0-10)", (b) => b.tier);
+const skewBandsText = formatBands(SKEW_SCORE_BANDS, "pts of favorable-direction skew", (b) => `${b.score.toFixed(1)} pts`);
 
 export const GUIDANCE_INDICATORS: GuidanceIndicator[] = [
   // ---------------------------------------------------------------------
@@ -237,13 +246,25 @@ export const GUIDANCE_INDICATORS: GuidanceIndicator[] = [
     id: "volatility-skew",
     name: "Volatility Skew",
     category: "entry",
-    importanceTier: "supporting",
+    importanceTier: "core",
     whatItMeasures:
-      "Whether downside puts or upside calls are priced richer in implied volatility at the front-month expiration -- a read on which direction the options market is paying up to protect against or speculate on, independent of the overall IV level.",
-    howCalculated: `Compares the ~25-delta put's IV against the ~25-delta call's IV (closest available |delta| to 0.25 on each side) at the front-month expiration, using deltas already computed via Black-Scholes. Skew = put IV − call IV, classified: > ${(SKEW_FLAT_THRESHOLD * 100).toFixed(0)} pts → put-skewed · < -${(SKEW_FLAT_THRESHOLD * 100).toFixed(0)} pts → call-skewed · otherwise → flat. Returns no reading at all on a thin chain with no real ~25-delta contract on one side, rather than a misleading number.`,
-    interpretHigh: "Put-skewed -- downside protection is priced richer than upside, the normal/common shape, consistent with hedging demand.",
-    interpretLow: "Call-skewed -- upside calls are priced richer than downside puts, less common, consistent with speculative or FOMO-driven demand.",
-    whereItAppears: "Ticker Overview (Volatility section), as an added interpretive line alongside the trend and term-structure sentences.",
+      "Whether downside puts or upside calls are priced richer in implied volatility at the front-month expiration -- a read on which direction the options market is paying up to protect against or speculate on, independent of the overall IV level. Direction-aware Entry Score input as of Phase 24: skew that pays you more for the exact risk your trade takes on (put-skewed for a put sale, call-skewed for a call sale) scores higher; skew working against your trade direction scores 0.",
+    howCalculated: `Compares the ~25-delta put's IV against the ~25-delta call's IV (closest available |delta| to 0.25 on each side) at the front-month expiration, using deltas already computed via Black-Scholes. Skew = put IV − call IV, classified: > ${(SKEW_FLAT_THRESHOLD * 100).toFixed(0)} pts → put-skewed · < -${(SKEW_FLAT_THRESHOLD * 100).toFixed(0)} pts → call-skewed · otherwise → flat. Returns no reading at all on a thin chain with no real ~25-delta contract on one side, rather than a misleading number -- the Skew component of the Entry Score is then null with a note, not a fabricated score. When the skew leans favorable for the trade direction, banded by magnitude: ${skewBandsText} Flat skew scores the bottom band (0.5) regardless of direction; skew leaning against the trade direction scores ${SKEW_UNFAVORABLE_SCORE}.`,
+    interpretHigh: "Put-skewed -- downside protection is priced richer than upside, the normal/common shape, consistent with hedging demand. Favorable (higher-scoring) for a put sale, unfavorable for a call sale.",
+    interpretLow: "Call-skewed -- upside calls are priced richer than downside puts, less common, consistent with speculative or FOMO-driven demand. Favorable for a call sale, unfavorable for a put sale.",
+    whereItAppears: "Ticker Overview (Volatility section, informational) and Entry Score card (Skew row, scored and direction-aware).",
+  },
+  {
+    id: "relative-strength",
+    name: "Relative Strength",
+    category: "entry",
+    importanceTier: "core",
+    whatItMeasures:
+      "How a stock's actual price performance compares to the broad market (SPY) and, when a peer group is defined, to its sector peers -- plus a longer-horizon structural read on its price shape. Built as the direct fix for a real mistake (an OKLO assignment that turned into a loss) where a stock was traded on tactical merits alone without ever checking whether it was fundamentally sound relative to its peers. Ticker-level Entry Score input as of Phase 24, same category as IV Percentile and Events -- identical for the Put and Call score for a given ticker.",
+    howCalculated: `Primary window: total return over the trailing ${PRIMARY_LOOKBACK_DAYS} days ("6 months"). vsMarket = ticker return − SPY return. vsSector = ticker return − average return of its defined peer basket (lib/sector-groups.ts) -- null, not fabricated, for a ticker with no defined group. Structural trend: swing-high/swing-low pattern over a separate, longer trailing ${STRUCTURAL_TREND_LOOKBACK_DAYS}-day window, classified higher-highs-higher-lows (healthy), lower-highs-lower-lows (deteriorating), or mixed. Scored: both vsMarket and vsSector clearly positive (> ${SUITABILITY_OUTPERFORM_THRESHOLD_PCT} pts) with healthy structure → 2.0 · both clearly negative (< ${SUITABILITY_UNDERPERFORM_THRESHOLD_PCT} pts) with deteriorating structure → 0 · either clearly negative → 0.5 · at least one clearly positive with structure not deteriorating → 1.5 · otherwise (roughly inline, or a positive read undercut by deteriorating structure) → 1.0. A missing sector comparison is treated as neutral, not positive -- it can't by itself unlock the top band.`,
+    interpretHigh: "The stock has genuinely outpaced both the market and its own peers over a real 6-month window, with a healthy higher-highs-higher-lows price structure -- the fundamental-soundness check this component exists to force before a trade, not just a tactical entry signal.",
+    interpretLow: "The stock has lagged the market and/or its peers with a deteriorating price structure -- exactly the pattern the OKLO mistake missed by evaluating a trade on tactical merits alone.",
+    whereItAppears: "Screener page (full breakdown, before a ticker is even added to the watchlist) and Entry Score card (Relative Strength row).",
   },
   {
     id: "rsi",
@@ -276,8 +297,8 @@ export const GUIDANCE_INDICATORS: GuidanceIndicator[] = [
     category: "entry",
     importanceTier: "core",
     whatItMeasures:
-      "The single combined 0-6 recommendation for a specific ticker, direction, and (once picked) strike -- the one number every other entry-time indicator here feeds into.",
-    howCalculated: `Ticker-level partial (0-4, strike-independent) = IV component (0-2) + Events catalyst score (0-1) + Events alignment score (0-1). Completed to the full 0-6 once a strike is selected, by adding that contract's Technical/EM Cushion score (0-2). The total maps to a tier label: ${tierBandsText}`,
+      "The single combined 0-10 recommendation for a specific ticker, direction, and (once picked) strike -- the one number every other entry-time indicator here feeds into. Expanded from a 0-6, 3-component score to 0-10 across 5 components in Phase 24, promoting Volatility Skew from informational-only to scored and adding Relative Strength.",
+    howCalculated: `Ticker-level partial (0-8, strike-independent) = IV component (0-2) + Events catalyst score (0-1) + Events alignment score (0-1) + Skew (0-2) + Relative Strength (0-2). Completed to the full 0-10 once a strike is selected, by adding that contract's Technical/EM Cushion score (0-2). The total maps to a tier label: ${tierBandsText}`,
     interpretHigh: "A SELL tier means the combined evidence -- volatility pricing, catalyst/directional risk, and strike cushion -- favors selling premium here.",
     interpretLow: "A DON'T SELL or CONSIDER SKIPPING tier means the combined evidence doesn't support this specific trade right now, even if one individual component looks fine in isolation.",
     whereItAppears: "Entry Score cards (Put Score / Call Score, the large number and tier badge at the top of each card).",
@@ -297,7 +318,7 @@ export const GUIDANCE_INDICATORS: GuidanceIndicator[] = [
       "Stock P/L = (current price − cost basis) × shares. Option P/L (this leg) = premium collected. Net = the two summed. Cost basis is either prefilled from a tracked open position for the ticker, or entered manually. When cost basis exceeds the current price, a plain-language note flags the position as currently underwater on the stock leg.",
     interpretHigh: "A positive net figure means the combined stock + premium position is currently ahead, even if one leg alone looks worse.",
     interpretLow: "A negative net figure means the stock loss currently outweighs the premium collected -- selling a call while underwater is a materially different situation than selling one at a gain, which is why this is surfaced explicitly rather than left for the option premium alone to imply.",
-    whereItAppears: "Positions page (Net Covered-Position P/L card on each open position, live-monitored) and Strike Selector results panel (pre-trade preview, once a Sell Call direction and a cost basis are set).",
+    whereItAppears: "Positions page (Net Covered-Position P/L card on each open position, live-monitored) only. The Strike Selector's pre-trade preview deliberately does NOT show this blended figure -- before the call is actually sold, blending the shares' pre-existing unrealized P/L into one number with the premium made selling the call look like it caused a loss (it can't -- premium is strictly additive on top of already-owned shares). The Strike Selector instead shows the shares' P/L separately as context alongside the two actual outcomes of selling the call (assigned / not assigned).",
   },
   {
     id: "profit-captured-pct",
@@ -330,11 +351,11 @@ export const GUIDANCE_INDICATORS: GuidanceIndicator[] = [
     category: "position-management",
     importanceTier: "core",
     whatItMeasures:
-      "For a meaningfully in-the-money position: a quantified, factual comparison of what assignment locks in versus what closing the position now would look like -- effective cost basis for a put, forgone upside for a call. Complements the ITM Classification's hold/close read with the concrete dollar math, but is deliberately never phrased as a recommendation -- only stated numbers and their implications.",
-    howCalculated: `Only computed once a position is meaningfully ITM -- reuses itmRiskClassification's own breach computation and its ${SELL_THE_NEWS_MAX_BREACH_PCT}% threshold as the "meaningful" cutoff, rather than a new one. Cash-secured put: effective cost basis if assigned = strike − premium collected, versus a hypothetical fresh cost basis (today's price) and the realized P/L if closed now instead; costBasisDelta = assigned basis − fresh basis (positive means assignment leaves a worse/higher basis). Covered call: locked-in realized gain if assigned (proceeds capped at the strike) versus the option-leg P/L if closed now while keeping the shares; upsideForgoneIfAssigned = (current price − strike) × shares.`,
+      "For a meaningfully in-the-money position: a quantified, factual comparison of what assignment locks in versus what closing the position now would look like -- effective cost basis and capital freed for a put, forgone upside and cash-flow shape for a call -- plus a Trend & Sentiment Context sub-section reading recent price trend against the AI-derived news lean (explicitly not a forecast). Complements the ITM Classification's hold/close read with the concrete dollar math, but is deliberately never phrased as a recommendation -- only stated numbers, their implications, and the underlying evidence.",
+    howCalculated: `Only computed once a position is meaningfully ITM -- reuses itmRiskClassification's own breach computation and its ${SELL_THE_NEWS_MAX_BREACH_PCT}% threshold as the "meaningful" cutoff, rather than a new one. Cash-secured put: effective cost basis if assigned = strike − premium collected, versus a hypothetical fresh cost basis (today's price) and the realized P/L if closed now instead; costBasisDelta = assigned basis − fresh basis (positive means assignment leaves a worse/higher basis). Capital picture: capital freed if closed now = (strike − buyback cost) × 100 × contracts, versus the cost to rebuy the same shares fresh at today's price; netCashDelta is the difference. Covered call: locked-in realized gain if assigned (proceeds capped at the strike) versus the option-leg P/L if closed now while keeping the shares; upsideForgoneIfAssigned = (current price − strike) × shares owned. Capital picture: cash received if assigned = strike × shares owned, versus $0 if closed now (shares simply retained). Trend & Sentiment Context reuses the existing SMA-trend classification (lib/trend.ts, the same logic behind the ticker Overview) and the existing AI directional lean (lib/briefing.ts, the same one behind Market Read) -- no new momentum math or new AI call. "Aligned" means trend and lean point the same direction; "conflicting" means they disagree; "insufficient" means one or both don't have a clear enough read (mixed trend, or neutral/mixed lean). Flags a caveat when the earnings-cooldown flag is active, since a recent large earnings move makes trend continuation less reliable.`,
     interpretHigh: "A large positive cost-basis delta (put) or a large upside-forgone figure (call) means the two paths differ substantially in dollar terms -- worth weighing deliberately rather than defaulting to whichever happens passively.",
     interpretLow: "A cost-basis delta near zero (put) or a small upside-forgone figure (call) means the two paths are close in dollar terms -- the choice matters less financially either way.",
-    whereItAppears: "Positions page, as a dedicated panel below the ITM Classification card, only shown when the position is meaningfully ITM.",
+    whereItAppears: "Positions page, as a dedicated panel below the ITM Classification card (with a Trend & Sentiment Context sub-section), only shown when the position is meaningfully ITM.",
   },
   {
     id: "itm-classification",
@@ -416,6 +437,8 @@ export const ENTRY_FLOW_STAGES: FlowBoxDef[][] = [
     { label: "IV / HV Percentile", targetId: "iv-percentile" },
     { label: "Technical / EM Cushion", targetId: "technical-em-cushion" },
     { label: "Events", targetId: "events" },
+    { label: "Skew", targetId: "volatility-skew" },
+    { label: "Relative Strength", targetId: "relative-strength" },
   ],
   [{ label: "Entry Score total", targetId: "entry-score" }],
   [{ label: "Tier recommendation", targetId: "entry-score" }],

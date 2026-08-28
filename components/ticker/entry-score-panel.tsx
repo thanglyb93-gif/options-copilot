@@ -5,7 +5,12 @@ import { combineWithStrikeCushion } from "@/lib/entry-score";
 import { formatOrdinal } from "@/lib/format";
 import { guidanceIndicatorById } from "@/lib/guidance-content";
 import { ImportanceBadge } from "@/components/shared/importance-badge";
-import type { EntryScoreResponse, IvComponentResult } from "@/types/api";
+import type {
+  EntryScoreResponse,
+  IvComponentResult,
+  RelativeStrengthComponentResult,
+  SkewComponentResult,
+} from "@/types/api";
 import { SkeletonLines, ErrorNote } from "./section";
 import type { StrikeSelection } from "./strike-selector";
 
@@ -61,6 +66,30 @@ function IvComponentDetail({ iv }: { iv: IvComponentResult }) {
       </span>
     </div>
   );
+}
+
+function skewDetail(skew: SkewComponentResult): string {
+  if (skew.score == null) return skew.note ?? "—";
+  const pts = skew.skew ? Math.abs(skew.skew.skew * 100).toFixed(1) : "—";
+  const lean = skew.skew?.lean ?? "flat";
+  return `${skew.score.toFixed(1)} (${lean}, ${pts}pt)`;
+}
+
+function relativeStrengthDetail(rs: RelativeStrengthComponentResult): string {
+  if (rs.score == null) return rs.note ?? "—";
+  const w = rs.evaluation?.window180;
+  const marketPart = w?.vsMarketPct != null ? `${w.vsMarketPct >= 0 ? "+" : ""}${w.vsMarketPct.toFixed(0)}% vs SPY` : null;
+  const sectorPart =
+    w?.vsSectorPct != null ? `${w.vsSectorPct >= 0 ? "+" : ""}${w.vsSectorPct.toFixed(0)}% vs ${rs.sectorGroupName ?? "sector"}` : null;
+  const structure = rs.evaluation?.structuralTrend;
+  const structurePart =
+    structure === "higher-highs-higher-lows"
+      ? "healthy structure"
+      : structure === "lower-highs-lower-lows"
+        ? "deteriorating structure"
+        : "mixed structure";
+  const parts = [marketPart, sectorPart, structurePart].filter((p): p is string => p != null);
+  return `${rs.score.toFixed(1)} (${parts.join(", ")})`;
 }
 
 function technicalDetail(matchedSelection: StrikeSelection | null): string {
@@ -119,7 +148,7 @@ function EntryScoreCard({
                 <span className={`font-mono text-3xl font-semibold ${tierClasses(combined.tier).text}`}>
                   {combined.total.toFixed(1)}
                 </span>
-                <span className="text-muted">/ 6</span>
+                <span className="text-muted">/ 10</span>
               </div>
               <span
                 className={`w-fit rounded border px-2 py-0.5 text-xs font-medium ${tierClasses(combined.tier).text} ${tierClasses(combined.tier).border}`}
@@ -133,7 +162,7 @@ function EntryScoreCard({
                 <span className="font-mono text-3xl font-semibold text-foreground">
                   {data.partialTotal.toFixed(1)}
                 </span>
-                <span className="text-muted">/ 4 (partial)</span>
+                <span className="text-muted">/ 8 (partial)</span>
               </div>
               <span className="text-xs text-muted">+ up to 2 more from your selected strike</span>
             </>
@@ -156,6 +185,12 @@ function EntryScoreCard({
                 data.eventComponent.catalystScore > 0 ? "yes" : "no"
               }, lean: ${data.eventComponent.lean})`}
               indicatorId="events"
+            />
+            <ComponentRow label="Skew" detail={skewDetail(data.skewComponent)} indicatorId="volatility-skew" />
+            <ComponentRow
+              label="Relative Strength"
+              detail={relativeStrengthDetail(data.relativeStrengthComponent)}
+              indicatorId="relative-strength"
             />
           </div>
         </>

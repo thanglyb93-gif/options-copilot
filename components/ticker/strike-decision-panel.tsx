@@ -22,7 +22,10 @@ import {
 import { formatCurrency, formatNumber, formatPercent } from "@/lib/format";
 import { guidanceIndicatorById } from "@/lib/guidance-content";
 import { ImportanceBadge } from "@/components/shared/importance-badge";
+import type { FetchState } from "@/lib/use-json-fetch";
 import type { EntryScoreResponse } from "@/types/api";
+import { SubsectionHeader } from "./section";
+import { EntryScorePanel } from "./entry-score-panel";
 import type { StrikeSelection } from "./strike-selector";
 
 /** Standard equity option contract size. No UI control for this -- there's
@@ -48,11 +51,13 @@ export function StrikeDecisionPanel({
 }: {
   selection: StrikeSelection | null;
   currentPrice: number | null;
-  putScore: EntryScoreResponse | null;
-  callScore: EntryScoreResponse | null;
+  putScore: FetchState<EntryScoreResponse>;
+  callScore: FetchState<EntryScoreResponse>;
 }) {
   const assignmentProbabilityIndicator = guidanceIndicatorById("assignment-probability");
   const emCushionIndicator = guidanceIndicatorById("technical-em-cushion");
+  const spreadIndicator = guidanceIndicatorById("liquidity-spread-score");
+  const openInterestIndicator = guidanceIndicatorById("open-interest");
 
   // Everything below is derived directly from the top-level Strike
   // Selector's state (selection) and the live quote (currentPrice) --
@@ -108,34 +113,49 @@ export function StrikeDecisionPanel({
   }, [currentPrice, strike, costBasis, shares, totalPremium, positionType]);
 
   if (!selection) {
+    // Strike-specific content (Summary, Assignment Probability/EM
+    // Cushion/Spread/OI, the chart) genuinely needs a valid selected
+    // contract. The Entry Score preview doesn't -- it already renders a
+    // partial (ticker-level) total with a null selection -- so it still
+    // shows here rather than disappearing entirely while no contract is
+    // selected (e.g. the auto-picked default strike having no live
+    // market to price a premium from).
     return (
-      <p className="text-sm text-muted">
-        Select a DTE, strike, and direction above to see the full decision breakdown.
-      </p>
+      <div className="flex flex-col gap-5">
+        <p className="text-sm text-muted">
+          Select a DTE, strike, and direction above to see the full decision breakdown.
+        </p>
+        <div className="flex flex-col gap-3">
+          <SubsectionHeader title="Making Decisions" />
+          <EntryScorePanel putScore={putScore} callScore={callScore} selection={null} />
+        </div>
+      </div>
     );
   }
 
-  const tickerScore = selection.direction === "put" ? putScore : callScore;
+  const tickerScore = selection.direction === "put" ? putScore.data : callScore.data;
   const opposesTradeDirection = tickerScore?.eventComponent.opposesTradeDirection ?? false;
 
   const missingCostBasis = positionType === "covered_call" && costBasis == null;
 
-  const netPosition =
+  // Deliberately NOT a single blended "position P/L" number. Selling a
+  // covered call against shares already owned can never make the
+  // position worse than just holding the shares -- it only ever adds
+  // premium, with capped upside as the sole tradeoff. Blending the
+  // stock's pre-existing unrealized P/L (which exists whether or not
+  // this call gets sold) together with the premium into one figure
+  // made selling the call look like it caused a loss, which is wrong.
+  // These stay as three separate numbers: the shares' own P/L (context,
+  // not attributable to this decision), and the two actual outcomes of
+  // selling the call, in both of which the premium is pure additive
+  // upside.
+  const stockPL =
     positionType === "covered_call" && costBasis != null && currentPrice != null
-      ? {
-          stockPL: (currentPrice - costBasis) * shares,
-          optionPL: totalPremium,
-          net: (currentPrice - costBasis) * shares + totalPremium,
-        }
-      : null;
-
-  const underwaterBy =
-    positionType === "covered_call" && costBasis != null && currentPrice != null && costBasis > currentPrice
-      ? costBasis - currentPrice
+      ? (currentPrice - costBasis) * shares
       : null;
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-5">
       {opposesTradeDirection && tickerScore && (
         <div className="rounded-md border border-red-500/60 bg-red-500/15 px-3 py-2 text-sm font-medium text-red-300">
           ⚠ Directional signal opposes this trade: {tickerScore.eventComponent.rationale}
@@ -153,23 +173,6 @@ export function StrikeDecisionPanel({
         <span className="text-muted">
           (<span className="font-mono text-foreground">{selection.dte}</span> DTE)
         </span>
-        <span className="text-muted">·</span>
-        <span className="text-muted">
-          premium <span className="font-mono text-foreground">{formatCurrency(selection.premium)}</span>
-          {selection.contract.spreadPct != null && selection.contract.spreadLabel != null && (
-            <span className="ml-1 font-mono">
-              · spread {selection.contract.spreadPct.toFixed(1)}% ({selection.contract.spreadLabel})
-            </span>
-          )}
-          <span className="ml-1 font-mono">
-            · OI: {selection.contract.openInterest != null ? selection.contract.openInterest.toLocaleString() : "—"} contracts
-          </span>
-        </span>
-        {selection.contract.spreadLabel === "wide" && (
-          <span className="rounded border border-red-500/60 bg-red-500/15 px-1.5 py-0.5 text-[11px] font-medium text-red-300">
-            ⚠ wide spread
-          </span>
-        )}
         {selection.contract.usingLastPriceFallback && (
           <span
             className="text-xs text-muted"
@@ -180,85 +183,158 @@ export function StrikeDecisionPanel({
         )}
       </div>
 
-      {/*
-        Total entry score intentionally NOT shown here -- the Entry Score
-        cards above are the single source of truth for that number (see
-        entry-score-panel.tsx's combineWithStrikeCushion), so it can't
-        disagree with what's shown there. This panel only surfaces detail
-        specific to the selected contract.
-      */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <div className="flex flex-col gap-0.5 rounded-md border border-border bg-background px-3 py-2">
-          <span className="flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-muted">
-            Assignment Probability
-            {assignmentProbabilityIndicator && (
-              <ImportanceBadge tier={assignmentProbabilityIndicator.importanceTier} />
-            )}
-          </span>
-          <span className="font-mono text-2xl font-semibold text-foreground">
-            {selection.contract.assignmentProbability ?? "—"}
-          </span>
-          {selection.contract.probabilityOfTouch != null && (
-            <span className="text-xs text-muted">Touch: {selection.contract.probabilityOfTouch}</span>
+      <div className="flex flex-col gap-2">
+        <SubsectionHeader title="Summary" />
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+          <StatCard label="Premium" value={formatCurrency(selection.premium)} />
+          <StatCard label="Current Price" value={formatCurrency(currentPrice)} />
+          {/* Max Profit/Breakeven/Return-if-OTM/Annualized all depend on
+              cost basis for a covered call (capitalAtRisk = costBasis *
+              shares) -- with no cost basis entered they'd be computed
+              against a fake $0 basis, so they stay hidden behind the
+              same missingCostBasis gate the chart already uses, rather
+              than showing a nonsensical number alongside the message
+              below explaining why it's missing. */}
+          {!missingCostBasis && (
+            <>
+              <StatCard label="Max Profit" value={formatCurrency(maxProfit)} />
+              <StatCard label="Breakeven" value={formatCurrency(breakeven)} />
+              <StatCard label="Return if OTM" value={formatPercent(returnIfOtm)} />
+              <StatCard label="Annualized Return" value={formatPercent(annualized)} />
+            </>
           )}
         </div>
-        <div className="flex flex-col gap-0.5 rounded-md border border-border bg-background px-3 py-2">
-          <span className="flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-muted">
-            EM Cushion
-            {emCushionIndicator && <ImportanceBadge tier={emCushionIndicator.importanceTier} />}
-          </span>
-          <span className="font-mono text-2xl font-semibold text-foreground">
-            {selection.contract.emCushion != null ? `${selection.contract.emCushion.toFixed(2)}x` : "—"}
-          </span>
-          <span className="text-xs text-muted">
-            score {selection.contract.cushionScore != null ? formatNumber(selection.contract.cushionScore, 1) : "—"}
-            {selection.contract.structuralConfirmation?.confirmed && (
-              <span className="ml-1 text-accent">
-                ✓ below/above {selection.contract.structuralConfirmation.referenceLabel}
-              </span>
-            )}
-          </span>
-        </div>
-      </div>
 
-      {missingCostBasis ? (
-        <p className="text-sm text-muted">
-          Enter a cost basis above to see profit/loss for this covered call.
-        </p>
-      ) : (
-        <>
-          {netPosition && (
-            <div className="flex flex-col gap-1 rounded-md border border-accent/40 bg-accent/5 px-4 py-3">
+        {missingCostBasis && (
+          <p className="text-sm text-muted">
+            Enter a cost basis above to see profit/loss for this covered call.
+          </p>
+        )}
+
+        {!missingCostBasis && stockPL != null && costBasis != null && (
+          <div className="flex flex-col gap-3">
+            {/*
+              1. The shares' own unrealized P/L -- pre-existing, exists
+              whether or not this call gets sold. Shown as context, not
+              as part of the call decision's own outcome.
+            */}
+            <div className="flex flex-col gap-1 rounded-md border border-border bg-background px-4 py-3">
               <span className="text-[11px] uppercase tracking-wide text-muted">
-                Net Covered-Position P/L
+                Your Shares Today (independent of this call decision)
               </span>
               <span
-                className={`font-mono text-3xl font-bold ${
-                  netPosition.net >= 0 ? "text-accent" : "text-red-400"
-                }`}
+                className={`font-mono text-2xl font-bold ${stockPL >= 0 ? "text-accent" : "text-red-400"}`}
               >
-                {formatCurrency(netPosition.net)}
+                {formatCurrency(stockPL)}
               </span>
               <span className="text-xs text-muted">
-                Stock {formatCurrency(netPosition.stockPL)} + option leg (premium){" "}
-                <span className="font-mono">{formatCurrency(netPosition.optionPL)}</span>
+                Your {shares} shares (cost basis {formatCurrency(costBasis)}): {formatCurrency(stockPL)} unrealized
+                -- this exists regardless of whether you sell this call.
               </span>
             </div>
-          )}
 
-          {underwaterBy != null && (
-            <p className="text-xs text-muted">
-              ℹ Shares currently below cost basis by {formatCurrency(underwaterBy)}.
-            </p>
-          )}
+            {/*
+              2 & 3. The two actual outcomes of selling THIS call. In
+              both, the premium is pure additive upside -- assignment
+              only caps how much further the shares can help, it never
+              turns the premium into a cost.
+            */}
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="flex flex-col gap-1 rounded-md border border-accent/40 bg-accent/5 px-4 py-3">
+                <span className="text-[11px] uppercase tracking-wide text-muted">
+                  If Assigned (price ≥ {formatCurrency(strike, 0)} at expiration)
+                </span>
+                <span className="font-mono text-2xl font-bold text-accent">{formatCurrency(maxProfit)}</span>
+                <span className="text-xs text-muted">
+                  Shares called away at {formatCurrency(strike, 0)}: ({formatCurrency(strike, 0)} −{" "}
+                  {formatCurrency(costBasis, 0)}) × {shares} + {formatCurrency(totalPremium)} premium collected.
+                </span>
+              </div>
 
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <StatCard label="Max Profit" value={formatCurrency(maxProfit)} />
-            <StatCard label="Breakeven" value={formatCurrency(breakeven)} />
-            <StatCard label="Return if OTM" value={formatPercent(returnIfOtm)} />
-            <StatCard label="Annualized Return" value={formatPercent(annualized)} />
+              <div className="flex flex-col gap-1 rounded-md border border-accent/40 bg-accent/5 px-4 py-3">
+                <span className="text-[11px] uppercase tracking-wide text-muted">
+                  If Not Assigned (price stays below {formatCurrency(strike, 0)})
+                </span>
+                <span className="font-mono text-2xl font-bold text-accent">+{formatCurrency(totalPremium)}</span>
+                <span className="text-xs text-muted">
+                  You keep your {shares} shares -- their value stays open/unrealized, unrelated to this decision --
+                  AND permanently keep {formatCurrency(totalPremium)} in premium: guaranteed income added to your
+                  position regardless of where the stock goes.
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="flex flex-col gap-3">
+        <SubsectionHeader title="Making Decisions" />
+
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div className="flex flex-col gap-0.5 rounded-md border border-border bg-background px-3 py-2">
+            <span className="flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-muted">
+              Assignment Probability
+              {assignmentProbabilityIndicator && (
+                <ImportanceBadge tier={assignmentProbabilityIndicator.importanceTier} />
+              )}
+            </span>
+            <span className="font-mono text-2xl font-semibold text-foreground">
+              {selection.contract.assignmentProbability ?? "—"}
+            </span>
+            {selection.contract.probabilityOfTouch != null && (
+              <span className="text-xs text-muted">Touch: {selection.contract.probabilityOfTouch}</span>
+            )}
           </div>
 
+          <div className="flex flex-col gap-0.5 rounded-md border border-border bg-background px-3 py-2">
+            <span className="flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-muted">
+              EM Cushion
+              {emCushionIndicator && <ImportanceBadge tier={emCushionIndicator.importanceTier} />}
+            </span>
+            <span className="font-mono text-2xl font-semibold text-foreground">
+              {selection.contract.emCushion != null ? `${selection.contract.emCushion.toFixed(2)}x` : "—"}
+            </span>
+            <span className="text-xs text-muted">
+              score {selection.contract.cushionScore != null ? formatNumber(selection.contract.cushionScore, 1) : "—"}
+              {selection.contract.structuralConfirmation?.confirmed && (
+                <span className="ml-1 text-accent">
+                  ✓ below/above {selection.contract.structuralConfirmation.referenceLabel}
+                </span>
+              )}
+            </span>
+          </div>
+
+          <div className="flex flex-col gap-0.5 rounded-md border border-border bg-background px-3 py-2">
+            <span className="flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-muted">
+              Spread / Liquidity
+              {spreadIndicator && <ImportanceBadge tier={spreadIndicator.importanceTier} />}
+            </span>
+            <span className="font-mono text-2xl font-semibold text-foreground">
+              {selection.contract.spreadPct != null ? `${selection.contract.spreadPct.toFixed(1)}%` : "—"}
+            </span>
+            <span className="text-xs text-muted">
+              {selection.contract.spreadLabel ?? "no live market"}
+              {selection.contract.spreadLabel === "wide" && (
+                <span className="ml-1 text-red-400">⚠ wide</span>
+              )}
+            </span>
+          </div>
+
+          <div className="flex flex-col gap-0.5 rounded-md border border-border bg-background px-3 py-2">
+            <span className="flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-muted">
+              Open Interest
+              {openInterestIndicator && <ImportanceBadge tier={openInterestIndicator.importanceTier} />}
+            </span>
+            <span className="font-mono text-2xl font-semibold text-foreground">
+              {selection.contract.openInterest != null ? selection.contract.openInterest.toLocaleString() : "—"}
+            </span>
+            <span className="text-xs text-muted">contracts</span>
+          </div>
+        </div>
+
+        <EntryScorePanel putScore={putScore} callScore={callScore} selection={selection} />
+
+        {!missingCostBasis && (
           <div className="h-64 w-full">
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart data={chartData} margin={{ top: 8, right: 16, bottom: 0, left: 0 }}>
@@ -317,8 +393,8 @@ export function StrikeDecisionPanel({
               </ComposedChart>
             </ResponsiveContainer>
           </div>
-        </>
-      )}
+        )}
+      </div>
     </div>
   );
 }

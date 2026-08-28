@@ -9,16 +9,15 @@ import {
   daysToExpiration,
 } from "@/lib/yahoo";
 import {
-  blackScholesDelta,
   blackScholesTheta,
+  effectiveIvAndDelta,
   findClosestDteIndex,
   assignmentProbabilityLabel,
-  impliedVolatilityFromPrice,
   probabilityOfTouch,
   spreadQuality,
   type OptionType,
 } from "@/lib/options-math";
-import { assessContractReliability, deltaBandFlag, dteBandFlag, unreliableIvFlag } from "@/lib/flags";
+import { deltaBandFlag, dteBandFlag, unreliableIvFlag } from "@/lib/flags";
 import { atmImpliedVolatility, ivTermStructure, volatilitySkew } from "@/lib/volatility";
 import { expectedMove, strikeCushion, cushionScore } from "@/lib/expected-move";
 import {
@@ -46,47 +45,19 @@ function mapContract(
   operativeRef: OperativeReference | null,
   marketState: string | undefined
 ) {
-  const reliability = assessContractReliability(contract, marketState);
-  let ivUnreliable = reliability.unreliable;
-  let usingLastPriceFallback = reliability.usingLastPriceFallback;
-  let effectiveIv = contract.impliedVolatility ?? null;
-
-  if (usingLastPriceFallback && underlyingPrice != null && contract.lastPrice != null) {
-    // Yahoo's own impliedVolatility field is frequently a degenerate
-    // placeholder (e.g. ~0.00001) when there's no live bid/ask, which
-    // would otherwise produce nonsense Greeks (delta pinned to 1, etc).
-    // Solve for the volatility that actually reproduces lastPrice instead.
-    const solvedIv = impliedVolatilityFromPrice({
-      spot: underlyingPrice,
-      strike: contract.strike,
-      dte,
-      targetPrice: contract.lastPrice,
-      optionType,
-    });
-    if (solvedIv != null) {
-      effectiveIv = solvedIv;
-    } else {
-      // lastPrice can't be reconciled with any plausible volatility (e.g.
-      // stale from before a large move) -- no estimate would be honest.
-      ivUnreliable = true;
-      usingLastPriceFallback = false;
-    }
-  }
+  const { effectiveIv, ivUnreliable, usingLastPriceFallback, delta } = effectiveIvAndDelta(
+    contract,
+    optionType,
+    underlyingPrice,
+    dte,
+    marketState
+  );
 
   const canComputeGreeks = !ivUnreliable && underlyingPrice != null && effectiveIv != null;
 
-  const greeksInput = canComputeGreeks
-    ? {
-        spot: underlyingPrice!,
-        strike: contract.strike,
-        dte,
-        volatility: effectiveIv!,
-        optionType,
-      }
+  const theta = canComputeGreeks
+    ? blackScholesTheta({ spot: underlyingPrice!, strike: contract.strike, dte, volatility: effectiveIv!, optionType })
     : null;
-
-  const delta = greeksInput ? blackScholesDelta(greeksInput) : null;
-  const theta = greeksInput ? blackScholesTheta(greeksInput) : null;
 
   let emCushion: number | null = null;
   let cushionScoreValue: number | null = null;

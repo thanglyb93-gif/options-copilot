@@ -10,13 +10,35 @@ export interface TrendInput {
   sma200: number | null;
 }
 
-export function describeTrend(input: TrendInput): string {
+interface SmaComparison {
+  label: string;
+  above: boolean;
+}
+
+/** The one place price-vs-SMA comparisons happen -- classifyTrend and describeTrend both derive from this, so there's no second copy of the "above/below" logic to drift out of sync. */
+function compareToSmas(input: TrendInput): SmaComparison[] {
   const { price, sma20, sma50, sma200 } = input;
-  const available = [
+  return [
     sma20 != null && { label: "20", above: price > sma20 },
     sma50 != null && { label: "50", above: price > sma50 },
     sma200 != null && { label: "200", above: price > sma200 },
-  ].filter((v): v is { label: string; above: boolean } => Boolean(v));
+  ].filter((v): v is SmaComparison => Boolean(v));
+}
+
+export type TrendClassification = "uptrend" | "downtrend" | "mixed";
+
+/** Null only when there's no SMA history at all to assess trend from. */
+export function classifyTrend(input: TrendInput): TrendClassification | null {
+  const comparisons = compareToSmas(input);
+  if (comparisons.length === 0) return null;
+  const aboveCount = comparisons.filter((c) => c.above).length;
+  if (aboveCount === comparisons.length) return "uptrend";
+  if (aboveCount === 0) return "downtrend";
+  return "mixed";
+}
+
+export function describeTrend(input: TrendInput): string {
+  const available = compareToSmas(input);
 
   if (available.length === 0) return "Not enough history to assess trend.";
 

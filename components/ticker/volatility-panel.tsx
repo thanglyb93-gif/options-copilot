@@ -4,6 +4,7 @@ import { describeRsi } from "@/lib/trend";
 import { guidanceIndicatorById } from "@/lib/guidance-content";
 import { ImportanceBadge } from "@/components/shared/importance-badge";
 import { formatOrdinal, formatPercent } from "@/lib/format";
+import { SubsectionHeader } from "./section";
 
 function pct(value: number | null): string {
   return value != null ? formatPercent(value * 100, 1) : "—";
@@ -43,6 +44,7 @@ export function VolatilityPanel({
 
   return (
     <div className="flex flex-col gap-3">
+      <SubsectionHeader title="Volatility & Structure" />
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
         <div className="flex flex-col gap-0.5">
           <span className="text-[11px] uppercase tracking-wide text-muted">Front-Month ATM IV</span>

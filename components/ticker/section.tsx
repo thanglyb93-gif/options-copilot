@@ -13,6 +13,22 @@ export function Section({
   );
 }
 
+/**
+ * Labeled sub-group within a Section -- e.g. the Strike Selector's
+ * "Direction" / "Enter Your Desired Option" / "Summary" / "Making
+ * Decisions" steps, or the Overview's "Fundamentals" / "Trend &
+ * Relative Performance" / "Volatility & Structure" groups. An underline
+ * rather than Section's own bordered box, so nested groups read as
+ * distinct steps without stacking boxes-in-a-box.
+ */
+export function SubsectionHeader({ title }: { title: string }) {
+  return (
+    <h3 className="border-b border-border pb-1.5 text-xs font-semibold uppercase tracking-wide text-foreground/80">
+      {title}
+    </h3>
+  );
+}
+
 export function SkeletonLines({ count = 3 }: { count?: number }) {
   return (
     <div className="flex flex-col gap-2">

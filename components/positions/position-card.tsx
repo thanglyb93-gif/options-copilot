@@ -159,7 +159,7 @@ export function PositionCard({
           )}
 
           {a.assignmentOpportunityCost && (
-            <AssignmentOpportunityCostPanel result={a.assignmentOpportunityCost} />
+            <AssignmentOpportunityCostPanel result={a.assignmentOpportunityCost} alignment={a.scenarioAlignment} />
           )}
         </>
       )}

@@ -178,7 +178,9 @@ export interface AssignmentOpportunityCostPut {
   ifAssigned: { effectiveCostBasis: number };
   ifCloseNow: { realizedPL: number; hypotheticalFreshBasis: number };
   costBasisDelta: number;
+  capital: { capitalFreedIfCloseNow: number; ifRebuyFreshShares: number; netCashDelta: number };
   narrative: string;
+  capitalNarrative: string;
 }
 
 export interface AssignmentOpportunityCostCall {
@@ -186,10 +188,24 @@ export interface AssignmentOpportunityCostCall {
   ifAssigned: { proceeds: number; realizedGain: number };
   ifCloseNow: { realizedPL: number; sharesRetainedValue: number };
   upsideForgoneIfAssigned: number;
+  capital: { cashReceivedIfAssigned: number; cashReceivedIfCloseNow: number };
   narrative: string;
+  capitalNarrative: string;
 }
 
 export type AssignmentOpportunityCostResult = AssignmentOpportunityCostPut | AssignmentOpportunityCostCall;
+
+export type ScenarioAlignmentLabel = "aligned" | "conflicting" | "insufficient";
+
+export interface ScenarioAlignmentResult {
+  trendClassification: "uptrend" | "downtrend" | "mixed" | null;
+  lean: DirectionalLean;
+  leanRationale: string;
+  alignment: ScenarioAlignmentLabel;
+  interpretation: string;
+  /** Present only when a recent large earnings-driven move is active for this stock. */
+  caveat?: string;
+}
 
 /** Live analytics for an OPEN position -- null/omitted for closed positions, which don't need them. */
 export interface PositionAnalytics {
@@ -215,6 +231,8 @@ export interface PositionAnalytics {
   itmRiskClassification: ItmRiskClassificationResult | null;
   /** Only populated when the position is meaningfully ITM (see assignmentOpportunityCost's breach gate). */
   assignmentOpportunityCost: AssignmentOpportunityCostResult | null;
+  /** Only populated alongside assignmentOpportunityCost -- best-effort, null if the underlying trend/lean data couldn't be gathered. */
+  scenarioAlignment: ScenarioAlignmentResult | null;
 }
 
 export interface PortfolioDeltaContribution {
@@ -360,16 +378,32 @@ export interface EventComponentResult {
   opposesTradeDirection: boolean;
 }
 
+export interface SkewComponentResult {
+  score: number | null;
+  skew: VolatilitySkewResult | null;
+  note?: string;
+}
+
+export interface RelativeStrengthComponentResult {
+  score: number | null;
+  evaluation: RelativeStrengthEvaluation | null;
+  sectorGroupName: string | null;
+  note?: string;
+}
+
 /**
- * Ticker-level entry score only (IV Percentile + Events, 0-4 partial).
- * The remaining 0-2 comes from a selected chain row's cushionScore,
- * combined client-side once a strike is picked.
+ * Ticker-level entry score only (IV Percentile + Events + Skew +
+ * Relative Strength, 0-8 partial). The remaining 0-2 comes from a
+ * selected chain row's cushionScore, combined client-side once a strike
+ * is picked.
  */
 export interface EntryScoreResponse {
   ticker: string;
   direction: "put" | "call";
   ivComponent: IvComponentResult;
   eventComponent: EventComponentResult;
+  skewComponent: SkewComponentResult;
+  relativeStrengthComponent: RelativeStrengthComponentResult;
   partialTotal: number;
   asOf: string;
 }
@@ -393,5 +427,91 @@ export interface WatchlistSummaryResponse {
   maxPainStrike: number | null;
   /** Put OI / call OI across the nearest expiration's chain. Null when there's no call OI to divide by. */
   putCallRatio: number | null;
+  asOf: string;
+}
+
+export interface RelativeStrengthWindow {
+  lookbackDays: number;
+  tickerReturnPct: number | null;
+  spyReturnPct: number | null;
+  vsMarketPct: number | null;
+  sectorReturnPct: number | null;
+  vsSectorPct: number | null;
+}
+
+export type StructuralTrend = "higher-highs-higher-lows" | "lower-highs-lower-lows" | "mixed";
+export type Suitability = "outperforming" | "inline" | "underperforming";
+
+export interface RelativeStrengthEvaluation {
+  ticker: string;
+  window90: RelativeStrengthWindow;
+  window180: RelativeStrengthWindow;
+  structuralTrend: StructuralTrend | null;
+  suitability: Suitability;
+}
+
+export interface ScreenerSectorGroup {
+  name: string;
+  peers: string[];
+  benchmarkEtf: string;
+}
+
+export interface ScreenerResponse {
+  ticker: string;
+  name: string;
+  price: number | null;
+  dayChangePercent: number | null;
+  evaluation: RelativeStrengthEvaluation;
+  /** Null when this ticker has no defined sector group -- broad-market-only comparison, not an error. */
+  sectorGroup: ScreenerSectorGroup | null;
+  summary: string;
+  asOf: string;
+}
+
+// ---------------------------------------------------------------------------
+// Covered Call vs. Cash-Secured Put comparison (Phase 26)
+// ---------------------------------------------------------------------------
+
+export interface ComparisonSideResult {
+  strike: number;
+  dte: number;
+  expirationDate: string;
+  premium: number | null;
+  capitalRequired: number;
+  annualizedYieldOnCapital: number | null;
+  assignmentProbability: string | null;
+  probabilityOfTouch: string | null;
+  emCushion: number | null;
+  cushionScore: number | null;
+  structuralConfirmation: StructuralConfirmation | null;
+  spreadPct: number | null;
+  spreadLabel: "tight" | "moderate" | "wide" | null;
+  skewComponent: SkewComponentResult;
+  /** Call side only. Null for the put side. */
+  worstCaseRealizedGain: number | null;
+  /** Call side only. Null for the put side. */
+  upsideForgoneEstimate: number | null;
+  /** Put side only. Null for the call side. */
+  worstCaseEffectiveBasis: number | null;
+}
+
+export type DirectionalEdge = "bullish" | "bearish" | "unclear";
+
+export interface ComparisonResponse {
+  ticker: string;
+  underlyingPrice: number;
+  /** Share-weighted average across every open position with shares_owned > 0 for this ticker -- always from the real tracked position, never a manual override. */
+  costBasis: number;
+  sharesOwned: number;
+  /** Same contracts count used on both sides -- sized to what the owned shares actually cover. */
+  contracts: number;
+  putSide: ComparisonSideResult;
+  callSide: ComparisonSideResult;
+  trend: "uptrend" | "downtrend" | "mixed" | null;
+  trendDescription: string;
+  /** Same template sentence the Screener and ticker Overview show for this ticker. */
+  relativeStrengthSummary: string;
+  directionalEdge: DirectionalEdge;
+  ninetyDayRange: { high: number; low: number } | null;
   asOf: string;
 }

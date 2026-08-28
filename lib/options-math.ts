@@ -3,6 +3,8 @@
  * unit-testable in isolation.
  */
 
+import { assessContractReliability, type ChainContractQuoteLike } from "./flags";
+
 export type OptionType = "call" | "put";
 
 export interface BlackScholesInput {
@@ -154,6 +156,67 @@ export function impliedVolatilityFromPrice(
   return (lo + hi) / 2;
 }
 
+export interface EffectiveIvAndDeltaInput extends ChainContractQuoteLike {
+  strike: number;
+}
+
+export interface EffectiveIvAndDelta {
+  effectiveIv: number | null;
+  ivUnreliable: boolean;
+  usingLastPriceFallback: boolean;
+  delta: number | null;
+}
+
+/**
+ * Resolves a contract's effective IV -- solving it from lastPrice
+ * (impliedVolatilityFromPrice) when there's no live bid/ask but the
+ * market's closed and a real last-traded price exists
+ * (assessContractReliability) -- and the delta computed from that IV.
+ * This is the exact reliability + IV-solving logic /api/options's
+ * mapContract uses to build each display row, extracted here so any
+ * other caller needing a contract's real delta (e.g. the Entry Score's
+ * Skew component, which needs deltas even when the market's closed and
+ * every contract's raw bid/ask is zero) gets the identical,
+ * already-battle-tested logic rather than a second copy that can drift.
+ */
+export function effectiveIvAndDelta(
+  contract: EffectiveIvAndDeltaInput,
+  optionType: OptionType,
+  underlyingPrice: number | undefined,
+  dte: number,
+  marketState: string | undefined
+): EffectiveIvAndDelta {
+  const reliability = assessContractReliability(contract, marketState);
+  let ivUnreliable = reliability.unreliable;
+  let usingLastPriceFallback = reliability.usingLastPriceFallback;
+  let effectiveIv = contract.impliedVolatility ?? null;
+
+  if (usingLastPriceFallback && underlyingPrice != null && contract.lastPrice != null) {
+    const solvedIv = impliedVolatilityFromPrice({
+      spot: underlyingPrice,
+      strike: contract.strike,
+      dte,
+      targetPrice: contract.lastPrice,
+      optionType,
+    });
+    if (solvedIv != null) {
+      effectiveIv = solvedIv;
+    } else {
+      // lastPrice can't be reconciled with any plausible volatility (e.g.
+      // stale from before a large move) -- no estimate would be honest.
+      ivUnreliable = true;
+      usingLastPriceFallback = false;
+    }
+  }
+
+  const canComputeGreeks = !ivUnreliable && underlyingPrice != null && effectiveIv != null;
+  const delta = canComputeGreeks
+    ? blackScholesDelta({ spot: underlyingPrice!, strike: contract.strike, dte, volatility: effectiveIv!, optionType })
+    : null;
+
+  return { effectiveIv, ivUnreliable, usingLastPriceFallback, delta };
+}
+
 /** Downside breakeven price for a covered call, per share. */
 export function coveredCallBreakeven(costBasis: number, premiumPerShare: number): number {
   return costBasis - premiumPerShare;
@@ -245,6 +308,30 @@ export function assignmentProbabilityLabel(delta: number): string {
  */
 export function probabilityOfTouch(delta: number): number {
   return Math.min(2 * Math.abs(delta), 1);
+}
+
+export interface ReferencePremiumInput {
+  bid: number | null;
+  ask: number | null;
+  lastPrice: number | null;
+  usingLastPriceFallback: boolean;
+}
+
+/**
+ * The premium to actually use for math (yield, breakeven, comparisons)
+ * from a contract's raw quote fields. A contract with bid=0/ask=0
+ * (non-null, just zero) is NOT a valid $0.00 quote -- it means there's
+ * no live two-sided market right now. Returning (0+0)/2 for that case
+ * would silently show a real-looking "$0.00" premium with no indication
+ * anything's wrong, so this returns null instead -- callers decide how
+ * to surface "no reliable premium." Mirrors the hasLiveMarket check in
+ * lib/flags.ts's assessContractReliability.
+ */
+export function referencePremium(input: ReferencePremiumInput): number | null {
+  if (input.usingLastPriceFallback && input.lastPrice != null) return input.lastPrice;
+  const hasLiveMarket = (input.bid ?? 0) > 0 && (input.ask ?? 0) > 0;
+  if (hasLiveMarket && input.bid != null && input.ask != null) return (input.bid + input.ask) / 2;
+  return null;
 }
 
 export type SpreadLabel = "tight" | "moderate" | "wide";

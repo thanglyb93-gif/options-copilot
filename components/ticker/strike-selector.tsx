@@ -10,6 +10,8 @@ import type {
 import { formatMonthDay } from "@/lib/format";
 import { guidanceIndicatorById } from "@/lib/guidance-content";
 import { ImportanceBadge } from "@/components/shared/importance-badge";
+import { referencePremium } from "@/lib/options-math";
+import { SubsectionHeader } from "./section";
 
 export interface StrikeSelection {
   positionType: "covered_call" | "cash_secured_put";
@@ -21,20 +23,6 @@ export interface StrikeSelection {
   contract: ContractRow;
   /** Per-share price paid for the shares backing a covered call. Null for puts (n/a) or when not yet entered. */
   costBasis: number | null;
-}
-
-/**
- * A contract with bid=0/ask=0 (non-null, just zero) is NOT a valid $0.00
- * quote -- it means there's no live two-sided market right now. Returning
- * (0+0)/2 for that case (as this used to) silently shows a real-looking
- * "$0.00" premium with no indication anything's wrong. Mirrors the
- * hasLiveMarket check in lib/flags.ts's assessContractReliability.
- */
-function referencePremium(row: ContractRow): number | null {
-  if (row.usingLastPriceFallback && row.lastPrice != null) return row.lastPrice;
-  const hasLiveMarket = (row.bid ?? 0) > 0 && (row.ask ?? 0) > 0;
-  if (hasLiveMarket && row.bid != null && row.ask != null) return (row.bid + row.ask) / 2;
-  return null;
 }
 
 export function StrikeSelector({
@@ -167,99 +155,102 @@ export function StrikeSelector({
   const maxPainIndicator = guidanceIndicatorById("max-pain");
 
   return (
-    <div className="flex flex-col gap-2">
-      <div className="flex flex-wrap items-end gap-4">
-        <label className="flex flex-col gap-1 text-xs text-muted">
-          DTE / Expiration
-          <select
-            value={expirationIndex}
-            onChange={(e) => setExpirationIndex(Number(e.target.value))}
-            className="rounded-md border border-border bg-background px-2 py-1.5 text-sm text-foreground"
-          >
-            {options.expirations.map((exp, i) => (
-              <option key={exp.expirationDate} value={i}>
-                {exp.dte}d · {formatMonthDay(exp.expirationDate)}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label className="flex flex-col gap-1 text-xs text-muted">
-          Strike
-          <select
-            value={strike ?? ""}
-            onChange={(e) => setStrike(Number(e.target.value))}
-            disabled={strikes.length === 0}
-            className="rounded-md border border-border bg-background px-2 py-1.5 text-sm text-foreground disabled:opacity-50"
-          >
-            {strikes.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <div className="flex flex-col gap-1 text-xs text-muted">
-          Direction
-          <div className="flex gap-1 rounded-md border border-border p-0.5">
-            {(["put", "call"] as const).map((d) => (
-              <button
-                key={d}
-                type="button"
-                onClick={() => setDirection(d)}
-                className={`rounded px-3 py-1 text-sm ${
-                  direction === d
-                    ? "bg-accent/15 text-foreground"
-                    : "text-muted hover:text-foreground"
-                }`}
-              >
-                Sell {d === "put" ? "Put" : "Call"}
-              </button>
-            ))}
-          </div>
+    <div className="flex flex-col gap-5">
+      <div className="flex flex-col gap-2">
+        <SubsectionHeader title="Direction" />
+        <div className="flex w-fit gap-1 rounded-md border border-border p-0.5">
+          {(["put", "call"] as const).map((d) => (
+            <button
+              key={d}
+              type="button"
+              onClick={() => setDirection(d)}
+              className={`rounded px-3 py-1 text-sm ${
+                direction === d
+                  ? "bg-accent/15 text-foreground"
+                  : "text-muted hover:text-foreground"
+              }`}
+            >
+              Sell {d === "put" ? "Put" : "Call"}
+            </button>
+          ))}
         </div>
-
-        {direction === "call" && (
-          <label className="flex flex-col gap-1 text-xs text-muted">
-            Cost Basis
-            <input
-              type="number"
-              step="0.01"
-              value={costBasisInput}
-              onChange={(e) => {
-                setCostBasisInput(e.target.value);
-                setCostBasisFromPosition(false);
-              }}
-              placeholder="e.g. 231.00"
-              className="w-28 rounded-md border border-border bg-background px-2 py-1.5 text-sm text-foreground"
-            />
-            {costBasisFromPosition && (
-              <span className="text-[10px] normal-case text-muted">from your tracked position</span>
-            )}
-          </label>
-        )}
       </div>
 
-      {noReliablePremium && (
-        <p className="text-xs text-muted">
-          This contract has no live two-sided market right now (illiquid) -- no reliable premium
-          to calculate from. Try a different strike or expiration.
-        </p>
-      )}
+      <div className="flex flex-col gap-2">
+        <SubsectionHeader title="Enter Your Desired Option" />
+        <div className="flex flex-wrap items-end gap-4">
+          <label className="flex flex-col gap-1 text-xs text-muted">
+            DTE / Expiration
+            <select
+              value={expirationIndex}
+              onChange={(e) => setExpirationIndex(Number(e.target.value))}
+              className="rounded-md border border-border bg-background px-2 py-1.5 text-sm text-foreground"
+            >
+              {options.expirations.map((exp, i) => (
+                <option key={exp.expirationDate} value={i}>
+                  {exp.dte}d · {formatMonthDay(exp.expirationDate)}
+                </option>
+              ))}
+            </select>
+          </label>
 
-      {maxPainStrike != null ? (
-        <span className="flex items-center gap-1.5 text-xs text-muted">
-          Max pain for this expiration: <span className="font-mono text-foreground">{maxPainStrike}</span>
-          {maxPainIndicator && <ImportanceBadge tier={maxPainIndicator.importanceTier} />}
-        </span>
-      ) : (
-        maxPain && (
-          <span className="text-xs text-muted">
-            Max pain only available for the nearest expiration ({maxPain.expirationDate})
+          <label className="flex flex-col gap-1 text-xs text-muted">
+            Strike
+            <select
+              value={strike ?? ""}
+              onChange={(e) => setStrike(Number(e.target.value))}
+              disabled={strikes.length === 0}
+              className="rounded-md border border-border bg-background px-2 py-1.5 text-sm text-foreground disabled:opacity-50"
+            >
+              {strikes.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          {direction === "call" && (
+            <label className="flex flex-col gap-1 text-xs text-muted">
+              Cost Basis
+              <input
+                type="number"
+                step="0.01"
+                value={costBasisInput}
+                onChange={(e) => {
+                  setCostBasisInput(e.target.value);
+                  setCostBasisFromPosition(false);
+                }}
+                placeholder="e.g. 231.00"
+                className="w-28 rounded-md border border-border bg-background px-2 py-1.5 text-sm text-foreground"
+              />
+              {costBasisFromPosition && (
+                <span className="text-[10px] normal-case text-muted">from your tracked position</span>
+              )}
+            </label>
+          )}
+        </div>
+
+        {noReliablePremium && (
+          <p className="text-xs text-muted">
+            This contract has no live two-sided market right now (illiquid) -- no reliable premium
+            to calculate from. Try a different strike or expiration.
+          </p>
+        )}
+
+        {maxPainStrike != null ? (
+          <span className="flex items-center gap-1.5 text-xs text-muted">
+            Max pain for this expiration: <span className="font-mono text-foreground">{maxPainStrike}</span>
+            {maxPainIndicator && <ImportanceBadge tier={maxPainIndicator.importanceTier} />}
           </span>
-        )
-      )}
+        ) : (
+          maxPain && (
+            <span className="text-xs text-muted">
+              Max pain only available for the nearest expiration ({maxPain.expirationDate})
+            </span>
+          )
+        )}
+      </div>
     </div>
   );
 }

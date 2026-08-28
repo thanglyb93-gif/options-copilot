@@ -10,7 +10,9 @@ import type {
   MaxPainResponse,
   NewsResponse,
   OptionsResponse,
+  PositionsListResponse,
   QuoteResponse,
+  ScreenerResponse,
 } from "@/types/api";
 import { Section, SkeletonLines, ErrorNote } from "./section";
 import { QuoteHeader } from "./quote-header";
@@ -18,7 +20,7 @@ import { VolatilityPanel } from "./volatility-panel";
 import { MarketReadPanel } from "./market-read-panel";
 import { StrikeSelector, type StrikeSelection } from "./strike-selector";
 import { StrikeDecisionPanel } from "./strike-decision-panel";
-import { EntryScorePanel } from "./entry-score-panel";
+import { ComparisonPanel } from "./comparison-panel";
 import { HeadlineList } from "@/components/headline-list";
 
 export function TickerDashboard({ symbol }: { symbol: string }) {
@@ -30,6 +32,16 @@ export function TickerDashboard({ symbol }: { symbol: string }) {
   const ivHistory = useJsonFetch<IvHistoryResponse>(`/api/iv-history/${symbol}`);
   const putScore = useJsonFetch<EntryScoreResponse>(`/api/entry-score/${symbol}?direction=put`);
   const callScore = useJsonFetch<EntryScoreResponse>(`/api/entry-score/${symbol}?direction=call`);
+  // Same relative-strength evaluation the Screener shows for this ticker --
+  // reusing its route (not a second computation) is what guarantees the
+  // Overview's new line can never disagree with the Screener's.
+  const screener = useJsonFetch<ScreenerResponse>(`/api/screener/${symbol}`);
+  // Holder-mode detection for the CC-vs-CSP comparison panel (Phase 26) --
+  // same source the Strike Selector's cost-basis prefill already uses.
+  const positions = useJsonFetch<PositionsListResponse>(`/api/positions?status=open`);
+  const isHolder = (positions.data?.positions ?? []).some(
+    (p) => p.ticker === symbol.toUpperCase() && (p.shares_owned ?? 0) > 0
+  );
 
   const [selection, setSelection] = useState<StrikeSelection | null>(null);
 
@@ -47,7 +59,7 @@ export function TickerDashboard({ symbol }: { symbol: string }) {
       <Section title="Overview">
         {quote.loading && <SkeletonLines count={3} />}
         {quote.error && <ErrorNote message={quote.error} />}
-        {quote.data && <QuoteHeader quote={quote.data} />}
+        {quote.data && <QuoteHeader quote={quote.data} screener={screener} />}
 
         {(options.loading || ivHistory.loading) && <SkeletonLines count={2} />}
         {(options.error || ivHistory.error) && (
@@ -60,10 +72,6 @@ export function TickerDashboard({ symbol }: { symbol: string }) {
 
       <Section title="Market Read">
         <MarketReadPanel symbol={symbol} earningsState={earnings} />
-      </Section>
-
-      <Section title="Entry Score">
-        <EntryScorePanel putScore={putScore} callScore={callScore} selection={selection} />
       </Section>
 
       <Section title="Strike Selector">
@@ -83,11 +91,19 @@ export function TickerDashboard({ symbol }: { symbol: string }) {
           <StrikeDecisionPanel
             selection={selection}
             currentPrice={quote.data?.price ?? null}
-            putScore={putScore.data}
-            callScore={callScore.data}
+            putScore={putScore}
+            callScore={callScore}
           />
         </div>
       </Section>
+
+      {isHolder && options.data && (
+        <ComparisonPanel
+          symbol={symbol}
+          options={options.data}
+          underlyingPrice={quote.data?.price ?? options.data.underlyingPrice}
+        />
+      )}
 
       <Section title="Further Reading">
         {news.loading && <SkeletonLines count={3} />}

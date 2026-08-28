@@ -485,14 +485,24 @@ export interface AssignmentOpportunityCostPut {
     effectiveCostBasis: number;
   };
   ifCloseNow: {
-    /** Total $ -- (premiumCollected - costToCloseNow) * 100 * contracts. Likely negative (a loss) for an ITM put. */
+    /** Total $ -- (premiumCollected - costToCloseNow) * 100 * contracts. Likely negative (a loss) for an ITM put. This is the actual cost of closing -- always shown explicitly, never left implied by the derived deltas below. */
     realizedPL: number;
     /** Per share -- currentPrice, if shares were bought fresh at today's price instead. */
     hypotheticalFreshBasis: number;
   };
   /** effectiveCostBasis - hypotheticalFreshBasis, per share. Positive means assignment leaves a worse (higher) cost basis than closing now and buying fresh. */
   costBasisDelta: number;
+  /** The cash/capital side of the comparison, distinct from the cost-basis (per-share) comparison above -- both matter, neither replaces the other. */
+  capital: {
+    /** Total $ -- (strike - costToCloseNow) * 100 * contracts. Cash returned to available balance after buying back the put: strike * 100 * contracts was reserved at entry, costToCloseNow * 100 * contracts is spent to close. */
+    capitalFreedIfCloseNow: number;
+    /** Total $ -- currentPrice * 100 * contracts. Cost to immediately buy the same share count fresh at today's price instead of via assignment. */
+    ifRebuyFreshShares: number;
+    /** capitalFreedIfCloseNow - ifRebuyFreshShares. Positive means cash left over after closing and rebuying fresh; negative means additional cash would be needed beyond what closing frees. */
+    netCashDelta: number;
+  };
   narrative: string;
+  capitalNarrative: string;
 }
 
 export interface AssignmentOpportunityCostCall {
@@ -504,14 +514,33 @@ export interface AssignmentOpportunityCostCall {
     realizedGain: number;
   };
   ifCloseNow: {
-    /** Total $, option leg only -- (premiumCollected - costToCloseNow) * 100 * contracts. Likely negative (a loss) for an ITM call. */
+    /** Total $, option leg only -- (premiumCollected - costToCloseNow) * 100 * contracts. Likely negative (a loss) for an ITM call. This is the actual cost of closing -- always shown explicitly, never left implied by the derived figures below. */
     realizedPL: number;
     /** Total $ -- currentPrice * sharesOwned, value of the shares retained. */
     sharesRetainedValue: number;
   };
   /** Total $ -- (currentPrice - strike) * sharesOwned. Upside left on the table if assigned instead of closing and keeping the shares. */
   upsideForgoneIfAssigned: number;
+  /**
+   * A simpler parallel note than the put's capital object -- a covered
+   * call's cash flow shape is different (no reserved cash to "free up");
+   * assignment is a cash INFLOW (shares called away for cash), closing
+   * is not (shares simply stay retained).
+   */
+  capital: {
+    /**
+     * Total $ -- strike * sharesOwned. Cash received if assigned (shares
+     * called away). Uses the actual owned share count, matching
+     * realizedGain/sharesRetainedValue's existing convention -- not a
+     * bare strike * 100 * contracts, since sharesOwned may not exactly
+     * equal that (see the ifAssigned.realizedGain field above).
+     */
+    cashReceivedIfAssigned: number;
+    /** Always 0 -- closing now generates no cash inflow; the shares are retained instead. */
+    cashReceivedIfCloseNow: number;
+  };
   narrative: string;
+  capitalNarrative: string;
 }
 
 export type AssignmentOpportunityCostResult = AssignmentOpportunityCostPut | AssignmentOpportunityCostCall;
@@ -551,12 +580,24 @@ export function assignmentOpportunityCost(
       `versus an effective cost basis of ${fmtDollars(effectiveCostBasis)} if assigned instead -- ` +
       `${fmtDollars(Math.abs(costBasisDelta))} ${deltaWord} basis than buying fresh.`;
 
+    const capitalFreedIfCloseNow = (strike - costToCloseNow) * 100 * contracts;
+    const ifRebuyFreshShares = currentPrice * 100 * contracts;
+    const netCashDelta = capitalFreedIfCloseNow - ifRebuyFreshShares;
+    const cashWord = netCashDelta > 0 ? "left over" : netCashDelta < 0 ? "additional cash needed" : "exactly enough";
+    const capitalNarrative =
+      `Closing now frees ${fmtDollars(capitalFreedIfCloseNow)} of the ${fmtDollars(strike * 100 * contracts)} reserved for this put ` +
+      `(strike value minus the ${fmtDollars(costToCloseNow * 100 * contracts)} buyback cost); buying the same ${100 * contracts} shares ` +
+      `fresh at today's price would cost ${fmtDollars(ifRebuyFreshShares)} -- a net cash difference of ${fmtDollars(Math.abs(netCashDelta))} (${cashWord}) ` +
+      `versus assignment, which instead applies the reserved cash directly at the strike.`;
+
     return {
       positionType: "cash_secured_put",
       ifAssigned: { effectiveCostBasis },
       ifCloseNow: { realizedPL: realizedPLOption, hypotheticalFreshBasis },
       costBasisDelta,
+      capital: { capitalFreedIfCloseNow, ifRebuyFreshShares, netCashDelta },
       narrative,
+      capitalNarrative,
     };
   }
 
@@ -572,12 +613,19 @@ export function assignmentOpportunityCost(
     `while keeping the shares (currently worth ${fmtDollars(sharesRetainedValue)}), leaving ${fmtDollars(upsideForgoneIfAssigned)} ` +
     `of additional upside in play if the price keeps rising past the strike.`;
 
+  const cashReceivedIfAssigned = strike * sharesOwned;
+  const capitalNarrative =
+    `If assigned, ${fmtDollars(cashReceivedIfAssigned)} in cash is received as the shares are called away at the strike. ` +
+    `Closing now instead generates no cash inflow -- the shares stay retained, worth ${fmtDollars(sharesRetainedValue)} at today's price.`;
+
   return {
     positionType: "covered_call",
     ifAssigned: { proceeds: strike, realizedGain },
     ifCloseNow: { realizedPL: realizedPLOption, sharesRetainedValue },
     upsideForgoneIfAssigned,
+    capital: { cashReceivedIfAssigned, cashReceivedIfCloseNow: 0 },
     narrative,
+    capitalNarrative,
   };
 }
 

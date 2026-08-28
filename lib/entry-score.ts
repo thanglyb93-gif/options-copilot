@@ -1,15 +1,21 @@
 /**
  * Ticker-level entry scoring for covered calls (selling a call against
- * owned shares) and cash-secured puts (selling a put). Two components,
- * 0-2 pts each, 0-4 total -- Technical Setup moved to a per-strike
+ * owned shares) and cash-secured puts (selling a put). Four ticker-level
+ * components -- IV/HV Percentile, Events, Skew, Relative Strength -- 0-2
+ * pts each, 0-8 total -- plus Technical Setup, a per-strike
  * expected-move check (lib/expected-move.ts, lib/structural-levels.ts)
  * that's added to this partial total once a chain row is selected,
- * completing it to 0-6. Pure -- no API/DB calls; callers gather the raw
+ * completing it to 0-10. Pure -- no API/DB calls; callers gather the raw
  * data.
  */
 
-import { percentileRank } from "./volatility";
+import { percentileRank, type VolatilitySkewLean, type VolatilitySkewResult } from "./volatility";
 import type { DirectionalLean } from "./briefing";
+import {
+  SUITABILITY_OUTPERFORM_THRESHOLD_PCT,
+  SUITABILITY_UNDERPERFORM_THRESHOLD_PCT,
+  type RelativeStrengthEvaluation,
+} from "./relative-strength";
 
 export type TradeDirection = "put" | "call";
 
@@ -47,17 +53,35 @@ export const CATALYST_RECENCY_WINDOW_DAYS = 14;
 export const CATALYST_MIN_HEADLINES = 3;
 
 /**
- * Full-score (0-6: this module's 0-4 partial + a selected strike's 0-2
+ * Full-score (0-10: this module's 0-8 partial + a selected strike's 0-2
  * cushion score) -> tier label. Checked top-down; first satisfied band
  * wins. Exported so the UI can apply the same mapping once it combines
- * the partial total with a selected strike's cushion score.
+ * the partial total with a selected strike's cushion score. Adjustable
+ * defaults.
  */
 export const TIER_BANDS = [
-  { min: 4.5, tier: "SELL (max size)" },
-  { min: 3, tier: "SELL (normal size)" },
-  { min: 1.5, tier: "CONSIDER SKIPPING" },
+  { min: 8, tier: "SELL (max size)" },
+  { min: 6, tier: "SELL (normal size)" },
+  { min: 4, tier: "CONSIDER SKIPPING" },
   { min: -Infinity, tier: "DON'T SELL" },
 ] as const;
+
+/**
+ * Skew magnitude (points, |putIv - callIv| * 100) -> score, applied only
+ * when the skew leans the favorable direction for the trade (put-skewed
+ * for a put sale, call-skewed for a call sale) -- see
+ * scoreSkewComponent. Checked top-down; first satisfied band wins.
+ * Adjustable defaults.
+ */
+export const SKEW_SCORE_BANDS = [
+  { min: 6, score: 2.0 },
+  { min: 4, score: 1.5 },
+  { min: 2, score: 1.0 },
+  { min: -Infinity, score: 0.5 },
+] as const;
+
+/** Score when the skew leans against the trade direction (working against you, not for it). */
+export const SKEW_UNFAVORABLE_SCORE = 0;
 
 // ---------------------------------------------------------------------------
 // Inputs
@@ -118,10 +142,28 @@ export interface EventComponentResult {
   opposesTradeDirection: boolean;
 }
 
+export interface SkewComponentResult {
+  score: number | null;
+  /** Raw skew result this score was derived from -- null when skew couldn't be computed (thin chain, no ~25-delta contract on one side). */
+  skew: VolatilitySkewResult | null;
+  note?: string;
+}
+
+export interface RelativeStrengthComponentResult {
+  score: number | null;
+  /** Full evaluation this score was derived from -- null when there wasn't enough price history to compute it. */
+  evaluation: RelativeStrengthEvaluation | null;
+  /** Peer group name, for display (e.g. "vs Semiconductors peers") -- null when the ticker has no defined sector group. */
+  sectorGroupName: string | null;
+  note?: string;
+}
+
 export interface TickerLevelScoreResult {
   ivComponent: IvComponentResult;
   eventComponent: EventComponentResult;
-  /** IV component (0-2, or 0 if unavailable) + Events (0-2). Max 4 -- the remaining 0-2 comes from a selected strike's cushion score. */
+  skewComponent: SkewComponentResult;
+  relativeStrengthComponent: RelativeStrengthComponentResult;
+  /** IV (0-2) + Events (0-2) + Skew (0-2) + Relative Strength (0-2). Max 8 -- the remaining 0-2 comes from a selected strike's cushion score. */
   partialTotal: number;
 }
 
@@ -257,21 +299,154 @@ export function scoreEventComponent(
 }
 
 // ---------------------------------------------------------------------------
+// Component 3 -- Volatility Skew (direction-aware)
+// ---------------------------------------------------------------------------
+
+function bandSkewMagnitude(pts: number): number {
+  for (const band of SKEW_SCORE_BANDS) {
+    if (pts >= band.min) return band.score;
+  }
+  return SKEW_SCORE_BANDS[SKEW_SCORE_BANDS.length - 1].score;
+}
+
+/**
+ * Scores lib/volatility.ts's volatilitySkew() output, direction-aware:
+ * for a put sale, put-skewed (richer put IV) is favorable -- paid more
+ * premium for the exact downside risk being taken on; for a call sale,
+ * call-skewed is the mirror-favorable case. Banded by magnitude
+ * (SKEW_SCORE_BANDS) when the skew leans favorable; flat skew (within
+ * volatility.ts's own SKEW_FLAT_THRESHOLD) scores the bottom band (0.5)
+ * regardless of direction; skew leaning against the trade scores
+ * SKEW_UNFAVORABLE_SCORE (0). Null (no reading -- thin chain) propagates
+ * to a null score with a note, never a fabricated number.
+ */
+export function scoreSkewComponent(
+  direction: TradeDirection,
+  skew: VolatilitySkewResult | null
+): SkewComponentResult {
+  if (skew == null) {
+    return {
+      score: null,
+      skew: null,
+      note: "Skew unavailable -- no ~25-delta contract on one side (thin chain)",
+    };
+  }
+
+  const favorableLean: VolatilitySkewLean = direction === "put" ? "put-skewed" : "call-skewed";
+  const pts = Math.abs(skew.skew) * 100;
+
+  let score: number;
+  if (skew.lean === "flat") {
+    score = 0.5;
+  } else if (skew.lean === favorableLean) {
+    score = bandSkewMagnitude(pts);
+  } else {
+    score = SKEW_UNFAVORABLE_SCORE;
+  }
+
+  return { score, skew };
+}
+
+// ---------------------------------------------------------------------------
+// Component 4 -- Relative Strength (ticker-level, direction-independent)
+// ---------------------------------------------------------------------------
+
+type MetricState = "positive" | "neutral" | "negative";
+
+/**
+ * Classifies a vs-market/vs-sector delta into positive/neutral/negative,
+ * reusing the exact thresholds the Screener's suitability label is
+ * judged on (lib/relative-strength.ts) rather than a second, competing
+ * set of numbers. Null (no data -- e.g. no sector group defined for this
+ * ticker) is treated as neutral, matching the Screener's own null-safe
+ * convention: missing sector data doesn't drag the score down, but it
+ * also can't itself satisfy the top band's "both positive" requirement.
+ */
+function metricState(pct: number | null): MetricState {
+  if (pct == null) return "neutral";
+  if (pct > SUITABILITY_OUTPERFORM_THRESHOLD_PCT) return "positive";
+  if (pct < SUITABILITY_UNDERPERFORM_THRESHOLD_PCT) return "negative";
+  return "neutral";
+}
+
+/**
+ * Scores lib/relative-strength.ts's 180-day (primary window) evaluation
+ * -- vsMarket, vsSector (when available), and the longer structural
+ * trend. Checked top-down; first satisfied condition wins:
+ * - both vsMarket and vsSector clearly positive + healthy structure -> 2.0
+ * - both clearly negative + deteriorating structure -> 0
+ * - either clearly negative -> 0.5
+ * - at least one clearly positive and structure isn't deteriorating -> 1.5
+ * - otherwise (both roughly inline, or a positive read undercut by a
+ *   deteriorating structure) -> 1.0
+ * Ticker-level, same as IV and Events -- identical for the put and call
+ * score requests for a given ticker.
+ */
+export function scoreRelativeStrengthComponent(
+  evaluation: RelativeStrengthEvaluation | null,
+  sectorGroupName: string | null
+): RelativeStrengthComponentResult {
+  if (evaluation == null || evaluation.window180.vsMarketPct == null) {
+    return {
+      score: null,
+      evaluation,
+      sectorGroupName,
+      note: "Not enough price history to compute relative strength",
+    };
+  }
+
+  const w = evaluation.window180;
+  const marketState = metricState(w.vsMarketPct);
+  const sectorState = metricState(w.vsSectorPct);
+  const healthyStructure = evaluation.structuralTrend === "higher-highs-higher-lows";
+  const deterioratingStructure = evaluation.structuralTrend === "lower-highs-lower-lows";
+
+  const positiveCount = [marketState, sectorState].filter((s) => s === "positive").length;
+  const negativeCount = [marketState, sectorState].filter((s) => s === "negative").length;
+
+  let score: number;
+  if (positiveCount === 2 && healthyStructure) {
+    score = 2.0;
+  } else if (negativeCount === 2 && deterioratingStructure) {
+    score = 0;
+  } else if (negativeCount >= 1) {
+    score = 0.5;
+  } else if (positiveCount >= 1 && !deterioratingStructure) {
+    score = 1.5;
+  } else {
+    score = 1.0;
+  }
+
+  return { score, evaluation, sectorGroupName };
+}
+
+// ---------------------------------------------------------------------------
 // Combined ticker-level score (partial -- see module doc)
 // ---------------------------------------------------------------------------
 
 export function scoreTickerLevel(
   direction: TradeDirection,
   ivPercentileData: IvPercentileInput,
-  briefingData: BriefingScoreInput
+  briefingData: BriefingScoreInput,
+  skewData: VolatilitySkewResult | null,
+  relativeStrengthData: { evaluation: RelativeStrengthEvaluation | null; sectorGroupName: string | null }
 ): TickerLevelScoreResult {
   const ivComponent = scoreIvComponent(ivPercentileData);
   const eventComponent = scoreEventComponent(direction, briefingData);
+  const skewComponent = scoreSkewComponent(direction, skewData);
+  const relativeStrengthComponent = scoreRelativeStrengthComponent(
+    relativeStrengthData.evaluation,
+    relativeStrengthData.sectorGroupName
+  );
 
   const partialTotal =
-    (ivComponent.score ?? 0) + eventComponent.catalystScore + eventComponent.alignmentScore;
+    (ivComponent.score ?? 0) +
+    eventComponent.catalystScore +
+    eventComponent.alignmentScore +
+    (skewComponent.score ?? 0) +
+    (relativeStrengthComponent.score ?? 0);
 
-  return { ivComponent, eventComponent, partialTotal };
+  return { ivComponent, eventComponent, skewComponent, relativeStrengthComponent, partialTotal };
 }
 
 export interface CombinedScore {
@@ -280,9 +455,9 @@ export interface CombinedScore {
 }
 
 /**
- * Combines a ticker-level partial (0-4) with a selected strike's cushion
+ * Combines a ticker-level partial (0-8) with a selected strike's cushion
  * score (0-2, or null if unavailable for that contract) into the full
- * 0-6 total + tier. The single place this combination happens -- every
+ * 0-10 total + tier. The single place this combination happens -- every
  * UI surface showing "the score" calls this rather than recomputing it,
  * so there's no risk of two numbers disagreeing.
  */

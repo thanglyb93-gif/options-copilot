@@ -1,9 +1,20 @@
 import { NextResponse } from "next/server";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabaseRouteClient } from "@/lib/supabase";
+import type { Database } from "@/types/database";
 import type { PositionRow, PositionStatus, PositionType } from "@/types/database";
-import type { PortfolioSummary, PositionAnalytics, PositionSummary } from "@/types/api";
-import { fetchHistoricalCloses, fetchOptionsChainWithinDays, fetchQuote, fetchQuoteSummaryExtras } from "@/lib/yahoo";
+import type { PortfolioSummary, PositionAnalytics, PositionSummary, ScenarioAlignmentResult } from "@/types/api";
+import {
+  fetchHistoricalCloses,
+  fetchOptionsChainWithinDays,
+  fetchQuote,
+  fetchQuoteSummaryExtras,
+  simpleMovingAverage,
+} from "@/lib/yahoo";
 import { earningsCooldownFlag } from "@/lib/flags";
+import { classifyTrend } from "@/lib/trend";
+import { scenarioAlignment } from "@/lib/scenario-alignment";
+import { gatherBriefingContext, getOrGenerateBriefing } from "@/lib/briefing-service";
 import {
   assignmentOpportunityCost,
   closeSignal,
@@ -199,7 +210,56 @@ function computeAnalytics(position: PositionRow, data: TickerData): PositionAnal
     closeSignal: closeSignalResult,
     itmRiskClassification: itmResult,
     assignmentOpportunityCost: assignmentOpportunityCostResult,
+    // Populated separately, only for positions where assignmentOpportunityCost
+    // applies -- see computeScenarioAlignment below. This function stays sync.
+    scenarioAlignment: null,
   };
+}
+
+/**
+ * Best-effort scenario-alignment enrichment for a meaningfully-ITM
+ * position -- gathers the same briefing/trend pipeline already used
+ * elsewhere (Market Read, ticker Overview) rather than a new data
+ * source. Only called for positions that already qualify for
+ * assignmentOpportunityCost, so the extra Anthropic/Yahoo/Finnhub cost
+ * (via gatherBriefingContext + getOrGenerateBriefing) is paid only when
+ * the panel is actually shown, not on every open position. Never throws
+ * -- a failure here just means this one sub-panel is omitted, not that
+ * the whole position's analytics breaks.
+ */
+async function computeScenarioAlignment(
+  supabase: SupabaseClient<Database>,
+  ticker: string,
+  positionType: "covered_call" | "cash_secured_put"
+): Promise<ScenarioAlignmentResult | null> {
+  try {
+    const context = await gatherBriefingContext(ticker);
+    const { content: briefing } = await getOrGenerateBriefing(supabase, ticker, context.inputs, false);
+
+    const price = context.quote.regularMarketPrice ?? null;
+    const trendClassification =
+      price != null
+        ? classifyTrend({
+            price,
+            sma20: simpleMovingAverage(context.closes, 20),
+            sma50: simpleMovingAverage(context.closes, 50),
+            sma200: simpleMovingAverage(context.closes, 200),
+          })
+        : null;
+
+    const cooldownFlagged = earningsCooldownFlag(context.closes).flagged;
+
+    return scenarioAlignment(
+      positionType === "covered_call" ? "call" : "put",
+      trendClassification,
+      briefing.directionalLean.lean,
+      briefing.directionalLean.rationale,
+      cooldownFlagged
+    );
+  } catch (error) {
+    console.error(`Failed to compute scenario alignment for ${ticker}:`, error);
+    return null;
+  }
 }
 
 function impliedVolFromChain(data: TickerData, position: PositionRow): number | null {
@@ -254,28 +314,39 @@ export async function GET(request: Request) {
   ]);
   const tickerDataByTicker = new Map(tickerDataEntries);
 
-  const positions: PositionSummary[] = rows.map((row) => {
-    const tickerData = tickerDataByTicker.get(row.ticker);
-    const analytics = row.status === "open" && tickerData ? computeAnalytics(row, tickerData) : null;
+  const positions: PositionSummary[] = await Promise.all(
+    rows.map(async (row) => {
+      const tickerData = tickerDataByTicker.get(row.ticker);
+      let analytics = row.status === "open" && tickerData ? computeAnalytics(row, tickerData) : null;
 
-    return {
-      id: row.id,
-      ticker: row.ticker,
-      position_type: row.position_type,
-      shares_owned: row.shares_owned,
-      cost_basis: row.cost_basis,
-      strike: row.strike,
-      premium_collected: row.premium_collected,
-      expiration_date: row.expiration_date,
-      contracts: row.contracts,
-      status: row.status,
-      opened_at: row.opened_at,
-      closed_at: row.closed_at,
-      closing_premium: row.closing_premium,
-      realized_pl: row.realized_pl,
-      analytics,
-    };
-  });
+      // Only pay the extra briefing/trend fetch for positions where the
+      // Assignment Opportunity Cost panel is already showing -- scenario
+      // alignment is additional context for that same panel, not a
+      // standalone feature computed for every open position.
+      if (analytics?.assignmentOpportunityCost != null) {
+        const alignment = await computeScenarioAlignment(supabase, row.ticker, row.position_type);
+        analytics = { ...analytics, scenarioAlignment: alignment };
+      }
+
+      return {
+        id: row.id,
+        ticker: row.ticker,
+        position_type: row.position_type,
+        shares_owned: row.shares_owned,
+        cost_basis: row.cost_basis,
+        strike: row.strike,
+        premium_collected: row.premium_collected,
+        expiration_date: row.expiration_date,
+        contracts: row.contracts,
+        status: row.status,
+        opened_at: row.opened_at,
+        closed_at: row.closed_at,
+        closing_premium: row.closing_premium,
+        realized_pl: row.realized_pl,
+        analytics,
+      };
+    })
+  );
 
   // Below the 2-open-position threshold this stays null -- not just an
   // empty/zero summary, genuinely absent, since it's not a meaningful

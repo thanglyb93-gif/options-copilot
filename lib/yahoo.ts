@@ -184,6 +184,7 @@ export async function fetchOptionsChainWithinDays(
 
 export interface NearestExpirationChain {
   underlyingPrice: number | undefined;
+  marketState: string | undefined;
   expirationDate: Date;
   calls: Option["calls"];
   puts: Option["puts"];
@@ -202,6 +203,7 @@ export async function fetchNearestExpirationChain(
 
   return {
     underlyingPrice: result.quote?.regularMarketPrice,
+    marketState: result.quote?.marketState,
     expirationDate: chain?.expirationDate ?? result.expirationDates[0],
     calls: chain?.calls ?? [],
     puts: chain?.puts ?? [],
@@ -246,6 +248,7 @@ export async function fetchTargetExpirationChain(
 
   return {
     underlyingPrice: result.quote?.regularMarketPrice,
+    marketState: result.quote?.marketState,
     expirationDate: chain?.expirationDate ?? target,
     calls: chain?.calls ?? [],
     puts: chain?.puts ?? [],
