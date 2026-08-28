@@ -102,7 +102,7 @@ export const GUIDANCE_INDICATORS: GuidanceIndicator[] = [
     howCalculated: `Percentile rank of today's at-the-money implied volatility against real daily IV snapshots collected for this ticker since it was added to the watchlist. Needs ${IV_HISTORY_MIN_ROWS} real snapshot days before it's trusted -- before that, HV Percentile drives the score instead (see below), clearly labeled as an approximation. Feeds the IV component of the Entry Score: ${ivBandsText}`,
     interpretHigh: "Options premiums are unusually rich for this stock right now -- more compensation for the risk of selling a covered call or cash-secured put.",
     interpretLow: "Premiums are cheap relative to this stock's own history -- selling here collects less for the same risk.",
-    whereItAppears: "Ticker Overview (Volatility section), Entry Score card (IV Component row), and Dashboard watchlist card (IV Percentile stat -- same underlying calculation, compact display).",
+    whereItAppears: "Ticker Overview (Volatility section), Entry Score card (IV Component row), and Dashboard watchlist card (that card's one volatility-percentile slot, once IV Percentile has matured -- HV Percentile fills the same slot before that, see below).",
   },
   {
     id: "hv-percentile",
@@ -115,7 +115,7 @@ export const GUIDANCE_INDICATORS: GuidanceIndicator[] = [
     interpretHigh: "The stock has been unusually choppy or volatile lately relative to its own recent history.",
     interpretLow: "Recent price action has been unusually calm for this stock.",
     whereItAppears:
-      "Ticker Overview (Volatility section, permanently) and Entry Score card (IV Component -- drives the score while IV Percentile is immature, and stays visible alongside it afterward, since a divergence between the two is itself useful signal).",
+      "Ticker Overview (Volatility section, permanently), Entry Score card (IV Component -- drives the score while IV Percentile is immature, and stays visible alongside it afterward, since a divergence between the two is itself useful signal), and Dashboard watchlist card (fills that card's one volatility-percentile slot -- labeled \"HV:\" there -- until IV Percentile matures, then hands off to it).",
   },
   {
     id: "technical-em-cushion",
@@ -127,7 +127,7 @@ export const GUIDANCE_INDICATORS: GuidanceIndicator[] = [
     howCalculated: `Expected move = price × IV × √(DTE / 365). Cushion = (price − strike) / expected move for a put, (strike − price) / expected move for a call. Banded into the Technical component of the Entry Score: ${cushionBandsText}`,
     interpretHigh: "A cushion of 2.0x or more means the strike sits well outside the stock's statistically expected range -- safer, typically at the cost of lower premium.",
     interpretLow: "A cushion near or below 0 means the strike is already at or past the current price relative to the expected move -- meaningfully higher assignment risk.",
-    whereItAppears: "Strike Selector results panel (EM Cushion stat) and Entry Score card (Technical row, once a strike is selected).",
+    whereItAppears: "Strike Selector results panel (EM Cushion stat), Entry Score card (Technical row, once a strike is selected), and the Covered Call vs. Cash-Secured Put comparison panel (EM Cushion + Structural row, one per side) -- same underlying figure in every case, just labeled for whichever context it's shown in.",
   },
   {
     id: "structural-confirmation",

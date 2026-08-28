@@ -49,10 +49,12 @@ export function VolatilityPanel({
         <div className="flex flex-col gap-0.5">
           <span className="text-[11px] uppercase tracking-wide text-muted">Front-Month ATM IV</span>
           <span className="font-mono text-sm text-foreground">{pct(iv)}</span>
+          <span className="text-[10px] leading-tight text-muted">Feeds IV Percentile &amp; IV Term Structure below</span>
         </div>
         <div className="flex flex-col gap-0.5">
           <span className="text-[11px] uppercase tracking-wide text-muted">30d HV</span>
           <span className="font-mono text-sm text-foreground">{pct(hv)}</span>
+          <span className="text-[10px] leading-tight text-muted">Feeds HV Percentile &amp; IV/HV ratio</span>
         </div>
         <div className="flex flex-col gap-0.5">
           <span className="text-[11px] uppercase tracking-wide text-muted">IV / HV</span>

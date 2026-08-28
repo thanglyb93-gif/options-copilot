@@ -411,10 +411,18 @@ export interface EntryScoreResponse {
 export interface IvRankSummary {
   /** Real iv_history rows collected so far for this ticker. */
   count: number;
-  /** Rows needed before a real percentile replaces the "Nd/needed" progress display. */
+  /** Rows needed before a real percentile replaces the HV Percentile fallback display. */
   needed: number;
   /** Real IV Percentile -- null until count >= needed. */
   percentile: number | null;
+  /**
+   * HV Percentile -- always computed when available (independent of IV
+   * maturity), so the Dashboard card has a real number to show instead
+   * of a meaningless "Nd/needed" placeholder for the weeks before IV
+   * Percentile matures. Same calculation the ticker Overview's HV
+   * Percentile stat uses.
+   */
+  hvPercentile: number | null;
 }
 
 export interface WatchlistSummaryResponse {

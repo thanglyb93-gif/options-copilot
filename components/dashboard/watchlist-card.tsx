@@ -6,9 +6,28 @@ import { useJsonFetch } from "@/lib/use-json-fetch";
 import type { IvRankSummary, WatchlistRow, WatchlistSummaryResponse } from "@/types/api";
 import { formatCurrency, formatPercent } from "@/lib/format";
 
-function formatIvRank(ivRank: IvRankSummary): string {
-  if (ivRank.percentile != null) return `${Math.round(ivRank.percentile)}%ile`;
-  return `${ivRank.count}d/${ivRank.needed}`;
+/**
+ * This card has exactly one volatility-percentile slot -- for the weeks
+ * before IV Percentile matures (needs IV_HISTORY_MIN_ROWS real daily
+ * snapshots), showing "Nd/needed" wasted that slot on a placeholder
+ * instead of a real number. HV Percentile is available immediately (no
+ * accumulation period, same calculation the ticker Overview's HV
+ * Percentile stat uses) so it fills the slot until IV Percentile takes
+ * over -- clearly labeled either way so it's never ambiguous which
+ * metric is showing.
+ */
+function volatilityField(ivRank: IvRankSummary): { label: string; value: string } {
+  const ivMature = ivRank.count >= ivRank.needed && ivRank.percentile != null;
+  if (ivMature) {
+    return { label: "IV:", value: `${Math.round(ivRank.percentile!)}%ile` };
+  }
+  if (ivRank.hvPercentile != null) {
+    return { label: "HV:", value: `${Math.round(ivRank.hvPercentile)}%ile` };
+  }
+  // Neither IV nor HV percentile is computable yet (e.g. too little
+  // daily-close history at all for this ticker) -- the only honest
+  // thing left to show is the literal building-history progress.
+  return { label: "IV:", value: `${ivRank.count}d/${ivRank.needed}` };
 }
 
 export function WatchlistCard({
@@ -21,6 +40,7 @@ export function WatchlistCard({
   const router = useRouter();
   const summary = useJsonFetch<WatchlistSummaryResponse>(`/api/watchlist-summary/${row.ticker}`);
   const [removing, setRemoving] = useState(false);
+  const vol = summary.data ? volatilityField(summary.data.ivRank) : null;
 
   async function handleRemove(e: React.MouseEvent) {
     e.stopPropagation();
@@ -88,10 +108,8 @@ export function WatchlistCard({
 
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
             <span>
-              IV Percentile:{" "}
-              <span className="font-mono text-foreground">
-                {formatIvRank(summary.data.ivRank)}
-              </span>
+              {vol?.label}{" "}
+              <span className="font-mono text-foreground">{vol?.value}</span>
             </span>
             <span>
               Max Pain:{" "}
