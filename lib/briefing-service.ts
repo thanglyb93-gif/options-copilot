@@ -206,13 +206,55 @@ async function cacheOrGenerate(
   return { content, generatedAt, cached: false };
 }
 
+/**
+ * Records a lean_history row for a freshly-generated (not cache-hit)
+ * per-ticker briefing, so its directional lean can later be checked
+ * against price 10 trading days out (see app/api/lean-resolve). Only
+ * called from getOrGenerateBriefing -- getOrGenerateTodaysSummary has no
+ * real per-ticker price to snapshot, so it's deliberately excluded.
+ */
+async function recordLeanHistory(
+  supabase: SupabaseClient<Database>,
+  ticker: string,
+  lean: BriefingContent["directionalLean"]["lean"],
+  priceAtSnapshot: number | null
+): Promise<void> {
+  if (priceAtSnapshot == null) {
+    console.error(`Skipping lean_history insert for ${ticker}: no current price available.`);
+    return;
+  }
+
+  const { error } = await supabase.from("lean_history").insert({
+    ticker,
+    date: toIsoDate(new Date()),
+    lean,
+    price_at_snapshot: priceAtSnapshot,
+  });
+
+  if (error) {
+    console.error(`Failed to insert lean_history row for ${ticker}:`, error.message);
+  }
+}
+
 export async function getOrGenerateBriefing(
   supabase: SupabaseClient<Database>,
   ticker: string,
   inputs: BriefingInputs,
   forceRefresh = false
 ): Promise<BriefingCacheResult> {
-  return cacheOrGenerate(supabase, ticker, CACHE_TTL_MS, () => generateBriefing(inputs), forceRefresh);
+  const result = await cacheOrGenerate(
+    supabase,
+    ticker,
+    CACHE_TTL_MS,
+    () => generateBriefing(inputs),
+    forceRefresh
+  );
+
+  if (!result.cached) {
+    await recordLeanHistory(supabase, ticker, result.content.directionalLean.lean, inputs.quote.price);
+  }
+
+  return result;
 }
 
 /** A general-market headline, classified into a level + category (see lib/headline-classification.ts). */

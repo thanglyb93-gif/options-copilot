@@ -7,7 +7,7 @@
  * stabilizes enough to generate this.
  */
 
-import type { BriefingContent } from "@/lib/briefing";
+import type { BriefingContent, DirectionalLean } from "@/lib/briefing";
 import type { HeadlineCategory, HeadlineLevel } from "@/lib/headline-classification";
 
 export type PositionType = "covered_call" | "cash_secured_put";
@@ -64,6 +64,25 @@ export type HeadlineClassificationRow = {
   level: HeadlineLevel;
   category: HeadlineCategory;
   classified_at: string;
+};
+
+export type LeanOutcome = "held_up" | "reversed" | "unclear";
+
+/**
+ * One row per per-ticker briefing regeneration (not cache hits -- see
+ * lib/briefing-service.ts's getOrGenerateBriefing), tracking whether the
+ * briefing's directionalLean held up 10 real trading days later. Resolved
+ * by app/api/lean-resolve's scheduled job; surfaced as an accuracy summary
+ * on the Guidance page via app/api/lean-accuracy.
+ */
+export type LeanHistoryRow = {
+  id: string;
+  ticker: string;
+  date: string;
+  lean: DirectionalLean;
+  price_at_snapshot: number;
+  price_after_10_trading_days: number | null;
+  outcome: LeanOutcome | null;
 };
 
 export interface Database {
@@ -127,6 +146,15 @@ export interface Database {
         Insert: Partial<Pick<HeadlineClassificationRow, "classified_at">> &
           Pick<HeadlineClassificationRow, "id" | "level" | "category">;
         Update: Partial<HeadlineClassificationRow>;
+        Relationships: [];
+      };
+      lean_history: {
+        Row: LeanHistoryRow;
+        Insert: Partial<
+          Pick<LeanHistoryRow, "id" | "price_after_10_trading_days" | "outcome">
+        > &
+          Pick<LeanHistoryRow, "ticker" | "date" | "lean" | "price_at_snapshot">;
+        Update: Partial<LeanHistoryRow>;
         Relationships: [];
       };
     };

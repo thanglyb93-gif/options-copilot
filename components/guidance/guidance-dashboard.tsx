@@ -2,6 +2,7 @@ import { Section } from "@/components/ticker/section";
 import { ENTRY_FLOW_STAGES, EXIT_FLOW_STAGES, DELTA_BAND_TEXT, DTE_BAND_TEXT } from "@/lib/guidance-content";
 import { IndicatorGlossary } from "./indicator-glossary";
 import { FlowDiagram } from "./flow-diagram";
+import { LeanAccuracySummary } from "./lean-accuracy-summary";
 
 export function GuidanceDashboard() {
   return (
@@ -88,6 +89,14 @@ export function GuidanceDashboard() {
             any specific outcome.
           </p>
         </div>
+      </Section>
+
+      <Section title="Track Record">
+        <p className="mb-2 text-xs text-muted">
+          How often the briefing&rsquo;s directional lean (bullish/bearish) has held up 10 trading
+          days later, tracked automatically each time a briefing regenerates.
+        </p>
+        <LeanAccuracySummary />
       </Section>
     </div>
   );
