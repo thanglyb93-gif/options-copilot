@@ -88,7 +88,7 @@ export function WatchlistCard({
 
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
             <span>
-              IV Rank:{" "}
+              IV Percentile:{" "}
               <span className="font-mono text-foreground">
                 {formatIvRank(summary.data.ivRank)}
               </span>

@@ -102,7 +102,7 @@ export const GUIDANCE_INDICATORS: GuidanceIndicator[] = [
     howCalculated: `Percentile rank of today's at-the-money implied volatility against real daily IV snapshots collected for this ticker since it was added to the watchlist. Needs ${IV_HISTORY_MIN_ROWS} real snapshot days before it's trusted -- before that, HV Percentile drives the score instead (see below), clearly labeled as an approximation. Feeds the IV component of the Entry Score: ${ivBandsText}`,
     interpretHigh: "Options premiums are unusually rich for this stock right now -- more compensation for the risk of selling a covered call or cash-secured put.",
     interpretLow: "Premiums are cheap relative to this stock's own history -- selling here collects less for the same risk.",
-    whereItAppears: "Ticker Overview (Volatility section), Entry Score card (IV Component row), and Dashboard watchlist card (IV Rank stat -- same underlying calculation, compact display).",
+    whereItAppears: "Ticker Overview (Volatility section), Entry Score card (IV Component row), and Dashboard watchlist card (IV Percentile stat -- same underlying calculation, compact display).",
   },
   {
     id: "hv-percentile",
