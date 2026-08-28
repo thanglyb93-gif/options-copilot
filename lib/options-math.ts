@@ -244,6 +244,51 @@ export function coveredCallPL(
   );
 }
 
+export interface CoveredCallHoldingOutcomes {
+  /** Today's unrealized P/L on the shares alone -- exists independent of whether this call is sold/held/assigned. */
+  stockPL: number;
+  /**
+   * If assigned (price >= strike at expiration): (strike - costBasis) *
+   * shares + total premium collected. Same formula as coveredCallPL at
+   * S = strike -- delegates to it rather than reimplementing.
+   */
+  ifAssigned: number;
+  /** If not assigned: shares are simply retained (their value is irrelevant to this figure, not projected) + total premium kept permanently. */
+  ifNotAssigned: number;
+}
+
+/**
+ * The three-part covered-call outcome breakdown used everywhere this
+ * app shows a covered call's economics against owned shares -- the
+ * pre-trade Strike Selector and an already-open /positions card alike.
+ * Selling a covered call against shares already owned can never make
+ * the position worse than simply holding the shares: it only ever adds
+ * premium, with capped upside as the sole tradeoff. Blending the
+ * shares' own pre-existing unrealized P/L together with the premium
+ * into a single number makes selling the call look like it caused a
+ * loss, which is never actually true -- so these three numbers are kept
+ * separate rather than summed.
+ *
+ * Time-independent: none of the three figures depend on DTE, only on
+ * strike, cost basis, share count, and premium already collected --
+ * which is exactly why the identical math applies unchanged whether the
+ * call hasn't been sold yet (a hypothetical selection) or is an
+ * already-open position with real premium already collected.
+ */
+export function coveredCallHoldingOutcomes(
+  currentPrice: number,
+  costBasis: number,
+  strike: number,
+  shares: number,
+  totalPremium: number
+): CoveredCallHoldingOutcomes {
+  return {
+    stockPL: (currentPrice - costBasis) * shares,
+    ifAssigned: coveredCallPL(strike, strike, costBasis, shares, totalPremium),
+    ifNotAssigned: totalPremium,
+  };
+}
+
 /**
  * Cash-secured put P/L at expiration for underlying price S.
  * P/L(S) = totalPremium - max(strike - S, 0) * shares

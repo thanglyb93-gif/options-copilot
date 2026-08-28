@@ -124,9 +124,7 @@ function computeAnalytics(position: PositionRow, data: TickerData): PositionAnal
     position.position_type,
     position.strike,
     position.premium_collected,
-    position.contracts,
-    position.cost_basis,
-    position.shares_owned
+    position.contracts
   );
 
   const closeSignalResult =
@@ -168,12 +166,7 @@ function computeAnalytics(position: PositionRow, data: TickerData): PositionAnal
       : null;
 
   const daysElapsed = daysBetween(position.opened_at, today);
-  const todayMarker = todayMarkerForPosition(
-    daysElapsed,
-    position.position_type,
-    netCoveredPL,
-    optionLegPL
-  );
+  const todayMarker = todayMarkerForPosition(daysElapsed, optionLegPL);
 
   const profitHistory =
     todayMarker != null && currentUnderlyingPrice != null
@@ -185,8 +178,6 @@ function computeAnalytics(position: PositionRow, data: TickerData): PositionAnal
           premiumCollected: position.premium_collected,
           contracts: position.contracts,
           positionType: position.position_type,
-          costBasis: position.cost_basis,
-          sharesOwned: position.shares_owned,
           closes: data.closes,
           openedAtIso: position.opened_at,
           currentPrice: currentUnderlyingPrice,

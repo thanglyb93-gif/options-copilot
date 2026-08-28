@@ -17,6 +17,7 @@ import {
   cashSecuredPutBreakeven,
   cashSecuredPutPL,
   coveredCallBreakeven,
+  coveredCallHoldingOutcomes,
   coveredCallPL,
 } from "@/lib/options-math";
 import { formatCurrency, formatNumber, formatPercent } from "@/lib/format";
@@ -138,20 +139,15 @@ export function StrikeDecisionPanel({
 
   const missingCostBasis = positionType === "covered_call" && costBasis == null;
 
-  // Deliberately NOT a single blended "position P/L" number. Selling a
-  // covered call against shares already owned can never make the
-  // position worse than just holding the shares -- it only ever adds
-  // premium, with capped upside as the sole tradeoff. Blending the
-  // stock's pre-existing unrealized P/L (which exists whether or not
-  // this call gets sold) together with the premium into one figure
-  // made selling the call look like it caused a loss, which is wrong.
-  // These stay as three separate numbers: the shares' own P/L (context,
-  // not attributable to this decision), and the two actual outcomes of
-  // selling the call, in both of which the premium is pure additive
-  // upside.
-  const stockPL =
+  // Deliberately NOT a single blended "position P/L" number -- see
+  // lib/options-math.ts's coveredCallHoldingOutcomes doc comment. The
+  // same function drives the identical 3-part breakdown on an
+  // already-open covered call position (components/positions/position-
+  // card.tsx), since the math is time-independent and applies unchanged
+  // whether the call has been sold yet or not.
+  const coveredCallOutcomes =
     positionType === "covered_call" && costBasis != null && currentPrice != null
-      ? (currentPrice - costBasis) * shares
+      ? coveredCallHoldingOutcomes(currentPrice, costBasis, strike, shares, totalPremium)
       : null;
 
   return (
@@ -211,40 +207,26 @@ export function StrikeDecisionPanel({
           </p>
         )}
 
-        {!missingCostBasis && stockPL != null && costBasis != null && (
+        {!missingCostBasis && coveredCallOutcomes && costBasis != null && (
           <div className="flex flex-col gap-3">
             {/*
-              1. The shares' own unrealized P/L -- pre-existing, exists
-              whether or not this call gets sold. Shown as context, not
-              as part of the call decision's own outcome.
-            */}
-            <div className="flex flex-col gap-1 rounded-md border border-border bg-background px-4 py-3">
-              <span className="text-[11px] uppercase tracking-wide text-muted">
-                Your Shares Today (independent of this call decision)
-              </span>
-              <span
-                className={`font-mono text-2xl font-bold ${stockPL >= 0 ? "text-accent" : "text-red-400"}`}
-              >
-                {formatCurrency(stockPL)}
-              </span>
-              <span className="text-xs text-muted">
-                Your {shares} shares (cost basis {formatCurrency(costBasis)}): {formatCurrency(stockPL)} unrealized
-                -- this exists regardless of whether you sell this call.
-              </span>
-            </div>
-
-            {/*
-              2 & 3. The two actual outcomes of selling THIS call. In
-              both, the premium is pure additive upside -- assignment
-              only caps how much further the shares can help, it never
-              turns the premium into a cost.
+              The two actual outcomes of selling THIS call. In both, the
+              premium is pure additive upside -- assignment only caps how
+              much further the shares can help, it never turns the
+              premium into a cost. (The shares' own unrealized P/L used
+              to be shown as a separate context card here -- removed
+              entirely, not just relabeled: cost-basis math should never
+              appear alongside what's displayed as this decision's
+              outcome, even framed as "independent" context.)
             */}
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="flex flex-col gap-1 rounded-md border border-accent/40 bg-accent/5 px-4 py-3">
                 <span className="text-[11px] uppercase tracking-wide text-muted">
                   If Assigned (price ≥ {formatCurrency(strike, 0)} at expiration)
                 </span>
-                <span className="font-mono text-2xl font-bold text-accent">{formatCurrency(maxProfit)}</span>
+                <span className="font-mono text-2xl font-bold text-accent">
+                  {formatCurrency(coveredCallOutcomes.ifAssigned)}
+                </span>
                 <span className="text-xs text-muted">
                   Shares called away at {formatCurrency(strike, 0)}: ({formatCurrency(strike, 0)} −{" "}
                   {formatCurrency(costBasis, 0)}) × {shares} + {formatCurrency(totalPremium)} premium collected.
@@ -255,11 +237,13 @@ export function StrikeDecisionPanel({
                 <span className="text-[11px] uppercase tracking-wide text-muted">
                   If Not Assigned (price stays below {formatCurrency(strike, 0)})
                 </span>
-                <span className="font-mono text-2xl font-bold text-accent">+{formatCurrency(totalPremium)}</span>
+                <span className="font-mono text-2xl font-bold text-accent">
+                  +{formatCurrency(coveredCallOutcomes.ifNotAssigned)}
+                </span>
                 <span className="text-xs text-muted">
                   You keep your {shares} shares -- their value stays open/unrealized, unrelated to this decision --
-                  AND permanently keep {formatCurrency(totalPremium)} in premium: guaranteed income added to your
-                  position regardless of where the stock goes.
+                  AND permanently keep {formatCurrency(coveredCallOutcomes.ifNotAssigned)} in premium: guaranteed
+                  income added to your position regardless of where the stock goes.
                 </span>
               </div>
             </div>

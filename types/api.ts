@@ -497,10 +497,14 @@ export interface ComparisonSideResult {
 
 export type DirectionalEdge = "bullish" | "bearish" | "unclear";
 
+/** "your-position": a real tracked open position with shares_owned > 0 exists -- costBasis is that position's actual (share-weighted) cost basis, never editable. "hypothetical": no such position exists -- costBasis is a what-if figure (defaults to underlyingPrice, editable client-side). */
+export type ComparisonMode = "your-position" | "hypothetical";
+
 export interface ComparisonResponse {
   ticker: string;
+  mode: ComparisonMode;
   underlyingPrice: number;
-  /** Share-weighted average across every open position with shares_owned > 0 for this ticker -- always from the real tracked position, never a manual override. */
+  /** "your-position" mode: share-weighted average across every open position with shares_owned > 0 -- the real tracked position, never a manual override. "hypothetical" mode: a what-if figure, defaults to underlyingPrice, overridable via the hypotheticalCostBasis query param. */
   costBasis: number;
   sharesOwned: number;
   /** Same contracts count used on both sides -- sized to what the owned shares actually cover. */

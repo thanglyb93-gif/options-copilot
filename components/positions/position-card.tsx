@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { PositionSummary } from "@/types/api";
 import { formatCurrency, formatDate, formatPercent } from "@/lib/format";
 import { PROFIT_TARGET_CC_PCT, PROFIT_TARGET_CSP_PCT } from "@/lib/position-analytics";
+import { coveredCallHoldingOutcomes } from "@/lib/options-math";
 import { ProfitHistoryChart } from "./profit-history-chart";
 import { AssignmentOpportunityCostPanel } from "./assignment-opportunity-cost-panel";
 
@@ -23,6 +24,25 @@ export function PositionCard({
   const isCoveredCall = position.position_type === "covered_call";
   const profitTarget = isCoveredCall ? PROFIT_TARGET_CC_PCT : PROFIT_TARGET_CSP_PCT;
   const closeTargetDollars = a?.maxProfit != null ? a.maxProfit * (profitTarget / 100) : null;
+  // Same shared 3-part breakdown the pre-trade Strike Selector uses
+  // (lib/options-math.ts's coveredCallHoldingOutcomes) -- the math is
+  // time-independent (strike, cost basis, shares, premium already
+  // collected; no DTE dependence), so it applies unchanged to an
+  // already-open position. Cash-secured puts keep the existing blended
+  // "Net Covered-Position P/L" card below unchanged -- this reframing
+  // is specific to covered calls, where the whole point is that selling
+  // against owned shares can never make the position worse, only add
+  // premium, which the blended framing obscured.
+  const coveredCallOutcomes =
+    isCoveredCall && a && position.cost_basis != null && position.shares_owned != null && a.currentUnderlyingPrice != null
+      ? coveredCallHoldingOutcomes(
+          a.currentUnderlyingPrice,
+          position.cost_basis,
+          position.strike,
+          position.shares_owned,
+          position.premium_collected * 100 * position.contracts
+        )
+      : null;
   // Mathematically bounded at exactly 100% since a real buyback cost can
   // never be negative -- capped defensively in case of a data glitch, per
   // Phase 21's explicit edge-case note. The negative side is uncapped and
@@ -79,31 +99,76 @@ export function PositionCard({
         <p className="text-sm text-muted">Live analytics unavailable for this ticker right now.</p>
       ) : (
         <>
-          <div className="flex flex-col gap-1 rounded-md border border-accent/40 bg-accent/5 px-4 py-3">
-            <span className="text-[11px] uppercase tracking-wide text-muted">Net Covered-Position P/L</span>
-            {a.netCoveredPL != null ? (
-              <>
-                <span
-                  className={`font-mono text-3xl font-bold ${a.netCoveredPL >= 0 ? "text-accent" : "text-red-400"}`}
-                >
-                  {formatCurrency(a.netCoveredPL)}
+          {coveredCallOutcomes ? (
+            <>
+              {/*
+                Covered call, 3-part breakdown -- same shared function
+                and framing as the pre-trade Strike Selector. NOT the
+                blended "Net Covered-Position P/L" figure: selling this
+                call against already-owned shares can't make the
+                position worse than holding the shares alone. (The
+                shares' own unrealized P/L used to be shown as a
+                separate context card here -- removed entirely, not just
+                relabeled: cost-basis math should never appear alongside
+                what's displayed as this call's outcome.)
+              */}
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div className="flex flex-col gap-1 rounded-md border border-accent/40 bg-accent/5 px-4 py-3">
+                  <span className="text-[11px] uppercase tracking-wide text-muted">
+                    If Assigned (price ≥ {formatCurrency(position.strike, 0)} at expiration)
+                  </span>
+                  <span className="font-mono text-2xl font-bold text-accent">
+                    {formatCurrency(coveredCallOutcomes.ifAssigned)}
+                  </span>
+                  <span className="text-xs text-muted">
+                    Shares called away at {formatCurrency(position.strike, 0)}: ({formatCurrency(position.strike, 0)}{" "}
+                    − {formatCurrency(position.cost_basis, 0)}) × {position.shares_owned} +{" "}
+                    {formatCurrency(position.premium_collected * 100 * position.contracts)} premium collected.
+                  </span>
+                </div>
+
+                <div className="flex flex-col gap-1 rounded-md border border-accent/40 bg-accent/5 px-4 py-3">
+                  <span className="text-[11px] uppercase tracking-wide text-muted">
+                    If Not Assigned (price stays below {formatCurrency(position.strike, 0)})
+                  </span>
+                  <span className="font-mono text-2xl font-bold text-accent">
+                    +{formatCurrency(coveredCallOutcomes.ifNotAssigned)}
+                  </span>
+                  <span className="text-xs text-muted">
+                    You keep your {position.shares_owned} shares -- their value stays open/unrealized, unrelated to
+                    this decision -- AND permanently keep {formatCurrency(coveredCallOutcomes.ifNotAssigned)} in
+                    premium: guaranteed income added to your position regardless of where the stock goes.
+                  </span>
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="flex flex-col gap-1 rounded-md border border-accent/40 bg-accent/5 px-4 py-3">
+              <span className="text-[11px] uppercase tracking-wide text-muted">Net Covered-Position P/L</span>
+              {a.netCoveredPL != null ? (
+                <>
+                  <span
+                    className={`font-mono text-3xl font-bold ${a.netCoveredPL >= 0 ? "text-accent" : "text-red-400"}`}
+                  >
+                    {formatCurrency(a.netCoveredPL)}
+                  </span>
+                  <span className="text-xs text-muted">
+                    {isCoveredCall && a.stockPL != null && (
+                      <>Stock {formatCurrency(a.stockPL)} + </>
+                    )}
+                    option leg <span className="font-mono">{formatCurrency(a.optionLegPL)}</span>
+                    {a.usingLastPriceFallback && " (last price as of market close, not live)"}
+                  </span>
+                </>
+              ) : (
+                <span className="text-sm text-muted">
+                  {a.contractUnreliable
+                    ? "No reliable market for this contract right now."
+                    : "Unavailable."}
                 </span>
-                <span className="text-xs text-muted">
-                  {isCoveredCall && a.stockPL != null && (
-                    <>Stock {formatCurrency(a.stockPL)} + </>
-                  )}
-                  option leg <span className="font-mono">{formatCurrency(a.optionLegPL)}</span>
-                  {a.usingLastPriceFallback && " (last price as of market close, not live)"}
-                </span>
-              </>
-            ) : (
-              <span className="text-sm text-muted">
-                {a.contractUnreliable
-                  ? "No reliable market for this contract right now."
-                  : "Unavailable."}
-              </span>
-            )}
-          </div>
+              )}
+            </div>
+          )}
 
           {a.profitCapturedPct != null && (
             <div className="flex flex-col gap-1">
@@ -133,6 +198,21 @@ export function PositionCard({
                 maxProfit={a.maxProfit}
                 closeTargetDollars={closeTargetDollars}
               />
+              {/*
+                Option-leg-only trajectory now (see lib/position-
+                analytics.ts's profitAtPrice) -- tracks progress toward
+                keeping the full premium, the "If Not Assigned" outcome
+                above. "If Assigned" is a threshold-crossing outcome tied
+                to price vs. strike, not something that decays day by
+                day the way option time value does, so it's deliberately
+                not plotted here.
+              */}
+              {coveredCallOutcomes && (
+                <p className="mt-1 text-[10px] text-muted">
+                  If assigned: see above -- this outcome depends on price crossing{" "}
+                  {formatCurrency(position.strike, 0)}, not time decay.
+                </p>
+              )}
             </div>
           )}
 

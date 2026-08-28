@@ -149,10 +149,6 @@ export interface ProfitHistoryInput {
   premiumCollected: number;
   contracts: number;
   positionType: "covered_call" | "cash_secured_put";
-  /** Covered call only. */
-  costBasis: number | null;
-  /** Covered call only -- actual owned shares, which may not exactly equal contracts * 100. */
-  sharesOwned: number | null;
   /** Real daily closes covering at least [opened_at, today] -- already fetched elsewhere for entry-price lookup, not a new data source. */
   closes: ProfitHistoryClose[];
   openedAtIso: string;
@@ -170,10 +166,14 @@ function daysBetweenDates(fromIso: string, toIso: string): number {
 }
 
 /**
- * $ profit at a given underlying price and remaining DTE -- the same
- * direction-aware formula for both segments: option leg alone for a
- * cash-secured put, option leg plus stock leg (net covered P/L) for a
- * covered call. Never the option leg alone for a covered position.
+ * $ profit at a given underlying price and remaining DTE -- OPTION LEG
+ * ONLY, for both a cash-secured put and a covered call alike. This
+ * tracks progress toward "you keep the full premium," which is exactly
+ * the "If Not Assigned" outcome shown elsewhere on the page (see
+ * lib/options-math.ts's coveredCallHoldingOutcomes). A covered call's
+ * shares P/L is never folded in here: it exists independent of this
+ * option decision and belongs on neither this trajectory nor the "100%
+ * target" it's measured against -- see this module's maxProfitForPosition.
  */
 function profitAtPrice(
   price: number,
@@ -183,9 +183,6 @@ function profitAtPrice(
   optionType: OptionType,
   premiumCollected: number,
   contracts: number,
-  positionType: "covered_call" | "cash_secured_put",
-  costBasis: number | null,
-  sharesOwned: number | null,
   riskFreeRate: number
 ): number {
   const theoreticalOptionValue = blackScholesPrice({
@@ -196,11 +193,7 @@ function profitAtPrice(
     optionType,
     riskFreeRate,
   });
-  const optionLegProfit = (premiumCollected - theoreticalOptionValue) * 100 * contracts;
-
-  if (positionType !== "covered_call") return optionLegProfit;
-  const stockProfit = costBasis != null && sharesOwned != null ? (price - costBasis) * sharesOwned : 0;
-  return optionLegProfit + stockProfit;
+  return (premiumCollected - theoreticalOptionValue) * 100 * contracts;
 }
 
 /**
@@ -230,8 +223,6 @@ export function generateProfitHistory(input: ProfitHistoryInput): ProfitHistoryR
     premiumCollected,
     contracts,
     positionType,
-    costBasis,
-    sharesOwned,
     closes,
     openedAtIso,
     currentPrice,
@@ -254,9 +245,6 @@ export function generateProfitHistory(input: ProfitHistoryInput): ProfitHistoryR
       optionType,
       premiumCollected,
       contracts,
-      positionType,
-      costBasis,
-      sharesOwned,
       riskFreeRate
     );
     real.push({ day, profitDollars });
@@ -274,9 +262,6 @@ export function generateProfitHistory(input: ProfitHistoryInput): ProfitHistoryR
       optionType,
       premiumCollected,
       contracts,
-      positionType,
-      costBasis,
-      sharesOwned,
       riskFreeRate
     );
     projected.push({ day, profitDollars });
@@ -291,42 +276,48 @@ export interface ProfitTrajectoryTodayMarker {
 }
 
 /**
- * The chart's one real (non-theoretical) data point: today's actual P/L,
- * reusing the already-computed live figures (netCoveredPL for a covered
- * call, optionLegPL for a cash-secured put) rather than recomputing
- * anything.
+ * The chart's one real (non-theoretical) data point: today's actual
+ * option-leg P/L, reusing the already-computed live figure
+ * (optionLegPL) rather than recomputing anything. Option-leg-only for
+ * BOTH position types now -- previously used the blended netCoveredPL
+ * for a covered call, which would have put a stock-inclusive number
+ * squarely between two option-leg-only trajectory segments (a visible
+ * discontinuity), on top of being the same conflation Part A removes
+ * elsewhere on the page.
  */
 export function todayMarkerForPosition(
   daysElapsed: number,
-  positionType: "covered_call" | "cash_secured_put",
-  netCoveredPL: number | null,
   optionLegPL: number | null
 ): ProfitTrajectoryTodayMarker | null {
-  const profitDollars = positionType === "covered_call" ? netCoveredPL : optionLegPL;
-  if (profitDollars == null) return null;
-  return { day: Math.max(0, daysElapsed), profitDollars };
+  if (optionLegPL == null) return null;
+  return { day: Math.max(0, daysElapsed), profitDollars: optionLegPL };
 }
 
 /**
- * Max profit at expiration (settlement exactly at strike) -- reuses the
- * same P/L formulas lib/options-math.ts already provides for the
- * pre-trade Strike Selector, rather than a new max-profit calculation.
- * Powers the chart's "100% target" reference line.
+ * Max profit at expiration -- OPTION LEG ONLY for both position types:
+ * the full premium collected. For a cash-secured put this is
+ * unchanged (reuses cashSecuredPutPL at settlement exactly at strike,
+ * where the max(strike - S, 0) term is zero, leaving just the
+ * premium). For a covered call this is now ALSO just the premium --
+ * matching the "If Not Assigned" outcome (lib/options-math.ts's
+ * coveredCallHoldingOutcomes) -- not the old (strike - costBasis) *
+ * shares + premium figure, which blended the shares' own unrealized
+ * P/L into what's supposed to be a read on the option leg's decay.
+ * Powers the chart's "100% target" reference line; "close target"
+ * (a % of this) recomputes off the corrected figure automatically,
+ * same as before.
  */
 export function maxProfitForPosition(
   positionType: "covered_call" | "cash_secured_put",
   strike: number,
   premiumCollected: number,
-  contracts: number,
-  costBasis: number | null,
-  sharesOwned: number | null
-): number | null {
+  contracts: number
+): number {
   const totalPremium = premiumCollected * 100 * contracts;
   if (positionType === "cash_secured_put") {
     return cashSecuredPutPL(strike, strike, totalPremium, 100 * contracts);
   }
-  if (costBasis == null || sharesOwned == null) return null;
-  return coveredCallPL(strike, strike, costBasis, sharesOwned, totalPremium);
+  return totalPremium;
 }
 
 // ---------------------------------------------------------------------------

@@ -56,13 +56,12 @@ interface HolderPosition {
 }
 
 /**
- * This feature's whole value depends on the cost basis being real, not
- * a guess -- so it's sourced here from the actual tracked position,
- * never accepted as a request parameter. No open position with shares
- * owned means this ticker isn't in holder mode and the comparison
- * can't run (the client is expected to not even show the panel in that
- * case -- see Part A -- but this route enforces it independently rather
- * than trusting that check alone).
+ * When a real open position exists, its cost basis is sourced here from
+ * the actual tracked position, never accepted as a request parameter
+ * (Phase 26) -- this feature's "your position" value depends on that
+ * being real, not a guess. When no such position exists, the route
+ * falls back to "hypothetical" mode (Phase 27) instead of refusing to
+ * run -- see the GET handler below.
  */
 async function resolveHolderPosition(
   supabase: ReturnType<typeof getSupabaseRouteClient>,
@@ -228,6 +227,10 @@ export async function GET(request: Request, { params }: { params: { ticker: stri
   const putExpiration = searchParams.get("putExpiration");
   const callStrike = Number(searchParams.get("callStrike"));
   const callExpiration = searchParams.get("callExpiration");
+  // Hypothetical mode only -- ignored entirely when a real position
+  // exists (see mode resolution below). Optional: when absent, defaults
+  // to underlyingPrice once the chain's been fetched.
+  const hypotheticalCostBasisParam = searchParams.get("hypotheticalCostBasis");
 
   if (!putExpiration || !callExpiration || !Number.isFinite(putStrike) || !Number.isFinite(callStrike)) {
     return NextResponse.json(
@@ -240,22 +243,6 @@ export async function GET(request: Request, { params }: { params: { ticker: stri
 
   try {
     const holder = await resolveHolderPosition(supabase, ticker);
-    if (!holder) {
-      return NextResponse.json(
-        {
-          error: `No open position with shares owned found for ${ticker} -- this comparison requires an actual held position.`,
-        },
-        { status: 400 }
-      );
-    }
-    if (holder.costBasis == null) {
-      return NextResponse.json(
-        {
-          error: `${ticker}'s tracked position has no recorded cost basis -- this comparison can't run without one.`,
-        },
-        { status: 400 }
-      );
-    }
 
     const group = sectorGroupForTicker(ticker);
     const peerTickers = peerTickersFor(ticker);
@@ -281,6 +268,23 @@ export async function GET(request: Request, { params }: { params: { ticker: stri
       return NextResponse.json({ error: "No live price available for this ticker" }, { status: 502 });
     }
 
+    // --- Mode resolution (Phase 27) ---
+    // A real position (with a recorded cost basis) always wins --
+    // "your position" mode is never overridable by a client-supplied
+    // cost basis. Only when no such position exists does the route fall
+    // back to "hypothetical": a made-up share count (one contract's
+    // worth) and a cost basis that's either client-supplied (the
+    // editable field) or defaults to today's live price.
+    const mode: "your-position" | "hypothetical" = holder && holder.costBasis != null ? "your-position" : "hypothetical";
+    const sharesOwned = mode === "your-position" ? holder!.totalShares : 100;
+    const costBasis =
+      mode === "your-position"
+        ? holder!.costBasis!
+        : (() => {
+            const parsed = hypotheticalCostBasisParam != null ? Number(hypotheticalCostBasisParam) : NaN;
+            return Number.isFinite(parsed) && parsed > 0 ? parsed : underlyingPrice;
+          })();
+
     const putExpirationEntry = chain.expirations.find(
       (e) => e.expirationDate.toISOString().slice(0, 10) === putExpiration
     );
@@ -303,11 +307,11 @@ export async function GET(request: Request, { params }: { params: { ticker: stri
     const putDte = daysToExpiration(putExpirationEntry.expirationDate);
     const callDte = daysToExpiration(callExpirationEntry.expirationDate);
 
-    // Same contracts count on both sides -- shares actually owned cap
-    // the call side (can't cover more contracts than shares support),
+    // Same contracts count on both sides -- shares actually owned (or,
+    // in hypothetical mode, the default share count) cap the call side,
     // and using that same size on the put side keeps this a genuine
     // apples-to-apples comparison rather than two arbitrary sizes.
-    const contracts = Math.max(1, Math.floor(holder.totalShares / 100));
+    const contracts = Math.max(1, Math.floor(sharesOwned / 100));
 
     // --- Ticker-level context, computed once ---
     const sma20 = simpleMovingAverage(closes, 20);
@@ -358,14 +362,15 @@ export async function GET(request: Request, { params }: { params: { ticker: stri
       allCallsAtExpiration: callExpirationEntry.calls,
       allPutsAtExpiration: callExpirationEntry.puts,
       contracts,
-      costBasisIfCall: holder.costBasis,
+      costBasisIfCall: costBasis,
     });
 
     return NextResponse.json({
       ticker,
+      mode,
       underlyingPrice,
-      costBasis: holder.costBasis,
-      sharesOwned: holder.totalShares,
+      costBasis,
+      sharesOwned,
       contracts,
       putSide,
       callSide,

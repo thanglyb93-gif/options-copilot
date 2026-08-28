@@ -10,7 +10,6 @@ import type {
   MaxPainResponse,
   NewsResponse,
   OptionsResponse,
-  PositionsListResponse,
   QuoteResponse,
   ScreenerResponse,
 } from "@/types/api";
@@ -36,12 +35,6 @@ export function TickerDashboard({ symbol }: { symbol: string }) {
   // reusing its route (not a second computation) is what guarantees the
   // Overview's new line can never disagree with the Screener's.
   const screener = useJsonFetch<ScreenerResponse>(`/api/screener/${symbol}`);
-  // Holder-mode detection for the CC-vs-CSP comparison panel (Phase 26) --
-  // same source the Strike Selector's cost-basis prefill already uses.
-  const positions = useJsonFetch<PositionsListResponse>(`/api/positions?status=open`);
-  const isHolder = (positions.data?.positions ?? []).some(
-    (p) => p.ticker === symbol.toUpperCase() && (p.shares_owned ?? 0) > 0
-  );
 
   const [selection, setSelection] = useState<StrikeSelection | null>(null);
 
@@ -97,11 +90,13 @@ export function TickerDashboard({ symbol }: { symbol: string }) {
         </div>
       </Section>
 
-      {isHolder && options.data && (
+      {options.data && (
         <ComparisonPanel
           symbol={symbol}
           options={options.data}
           underlyingPrice={quote.data?.price ?? options.data.underlyingPrice}
+          putScore={putScore}
+          callScore={callScore}
         />
       )}
 
