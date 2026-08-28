@@ -9,7 +9,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Quote } from "yahoo-finance2/modules/quote";
 import type { Database } from "@/types/database";
 import { fetchQuote, fetchHistoricalCloses, simpleMovingAverage, type DailyClose } from "./yahoo";
-import { getFinnhubClient, fetchGeneralMarketNews, type FinnhubNewsItem } from "./finnhub";
+import { getFinnhubClient, fetchGeneralMarketNews } from "./finnhub";
 import { earningsCooldownFlag } from "./flags";
 import { describeTrend } from "./trend";
 import {
@@ -18,7 +18,9 @@ import {
   type BriefingContent,
   type BriefingInputs,
 } from "./briefing";
-import { generateMarketPulse, type MarketPulseInputs } from "./market-pulse";
+import { generateTodaysSummary, type TodaysSummaryInputs } from "./todays-summary";
+import { getOrClassifyHeadlines, stableHeadlineId } from "./headline-classification-service";
+import type { ClassifiableHeadline, HeadlineCategory, HeadlineLevel } from "./headline-classification";
 
 const EARNINGS_LOOKBACK_DAYS = 14;
 const EARNINGS_LOOKAHEAD_DAYS = 120;
@@ -26,10 +28,10 @@ const NEWS_LOOKBACK_DAYS = 14;
 const MAX_HEADLINES_IN_PROMPT = 8;
 const CACHE_TTL_MS = 4 * 60 * 60 * 1000; // 4 hours
 
-const MARKET_PULSE_TICKER_KEY = "__MARKET__";
-const MARKET_PULSE_CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
-const MARKET_PULSE_HEADLINE_LIMIT = 50;
-const MAX_HEADLINES_IN_MARKET_PULSE_PROMPT = 20;
+const TODAYS_SUMMARY_CACHE_KEY = "__TODAYS_SUMMARY__";
+const TODAYS_SUMMARY_CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
+const NEWS_PAGE_HEADLINE_LIMIT = 50;
+const MAX_HEADLINES_PER_LEVEL_IN_PROMPT = 20;
 
 function toIsoDate(date: Date): string {
   return date.toISOString().slice(0, 10);
@@ -153,7 +155,7 @@ export interface BriefingCacheResult {
 
 /**
  * Shared cache-or-generate flow against the `briefings` table, keyed by
- * `key` (a ticker for per-ticker briefings, or the fixed Market Pulse key).
+ * `key` (a ticker for per-ticker briefings, or the fixed Today's Summary key).
  * Returns a cached row if one exists, is fresh (<ttlMs), and validates
  * against the current schema; otherwise calls `generate`, upserts, and
  * returns the fresh result. A cached row that predates a schema change
@@ -213,45 +215,111 @@ export async function getOrGenerateBriefing(
   return cacheOrGenerate(supabase, ticker, CACHE_TTL_MS, () => generateBriefing(inputs), forceRefresh);
 }
 
-export interface MarketPulseContext {
-  inputs: MarketPulseInputs;
-  /** Raw headlines for the page's headline list (up to MARKET_PULSE_HEADLINE_LIMIT, uncapped by the prompt's smaller cap). */
-  headlines: FinnhubNewsItem[];
+/** A general-market headline, classified into a level + category (see lib/headline-classification.ts). */
+export interface ClassifiedNewsHeadline {
+  id: string;
+  headline: string;
+  source: string;
+  url: string;
+  summary: string;
+  publishedAt: string;
+  level: HeadlineLevel;
+  category: HeadlineCategory;
 }
 
-/** Gathers general-market headlines for the daily Market Pulse briefing. */
-export async function gatherMarketPulseContext(): Promise<MarketPulseContext> {
-  const headlines = await fetchGeneralMarketNews(MARKET_PULSE_HEADLINE_LIMIT);
+export interface TodaysSummaryContext {
+  inputs: TodaysSummaryInputs;
+  /** Every fetched headline (up to NEWS_PAGE_HEADLINE_LIMIT), classified, most-recent-first -- feeds the page's categorized groups. */
+  headlines: ClassifiedNewsHeadline[];
+}
 
-  const inputs: MarketPulseInputs = {
-    asOf: new Date().toISOString(),
-    headlines: headlines.slice(0, MAX_HEADLINES_IN_MARKET_PULSE_PROMPT).map((n) => ({
+/**
+ * Gathers general-market headlines, classifies each one (cached
+ * permanently per headline -- see lib/headline-classification-service.ts),
+ * and pulls the current watchlist, for both Today's Summary's prompt and
+ * the News page's categorized headline groups.
+ */
+export async function gatherTodaysSummaryContext(
+  supabase: SupabaseClient<Database>
+): Promise<TodaysSummaryContext> {
+  const [rawHeadlines, watchlistResult] = await Promise.all([
+    fetchGeneralMarketNews(NEWS_PAGE_HEADLINE_LIMIT),
+    supabase.from("watchlist").select("ticker"),
+  ]);
+
+  if (watchlistResult.error) {
+    console.error("Failed to read watchlist for Today's Summary:", watchlistResult.error.message);
+  }
+  const watchlistTickers = (watchlistResult.data ?? []).map((r) => r.ticker);
+
+  const classifiable: ClassifiableHeadline[] = rawHeadlines.map((n) => {
+    const publishedAt = new Date(n.datetime * 1000).toISOString();
+    return {
+      id: stableHeadlineId({ url: n.url, headline: n.headline, publishedAt }),
       headline: n.headline,
       source: n.source,
       summary: n.summary,
-      publishedAt: new Date(n.datetime * 1000).toISOString(),
-    })),
+      publishedAt,
+    };
+  });
+
+  const classifications = await getOrClassifyHeadlines(supabase, classifiable);
+
+  const headlines: ClassifiedNewsHeadline[] = classifiable.map((h, i) => {
+    // Fallback for the rare case a classification failed validation and was
+    // dropped -- keeps every headline visible on the page rather than
+    // silently disappearing one.
+    const classification = classifications.get(h.id) ?? { level: "individual" as const, category: "other" as const };
+    return {
+      id: h.id,
+      headline: h.headline,
+      source: h.source,
+      url: rawHeadlines[i].url,
+      summary: h.summary,
+      publishedAt: h.publishedAt,
+      level: classification.level,
+      category: classification.category,
+    };
+  });
+
+  const macroHeadlines = headlines.filter((h) => h.level === "macro");
+  const individualHeadlines = headlines.filter((h) => h.level === "individual");
+
+  const toBriefingHeadline = (h: ClassifiedNewsHeadline) => ({
+    headline: h.headline,
+    source: h.source,
+    summary: h.summary,
+    publishedAt: h.publishedAt,
+  });
+
+  const inputs: TodaysSummaryInputs = {
+    asOf: new Date().toISOString(),
+    watchlistTickers,
+    macroHeadlines: macroHeadlines.slice(0, MAX_HEADLINES_PER_LEVEL_IN_PROMPT).map(toBriefingHeadline),
+    individualHeadlines: individualHeadlines
+      .slice(0, MAX_HEADLINES_PER_LEVEL_IN_PROMPT)
+      .map(toBriefingHeadline),
   };
 
   return { inputs, headlines };
 }
 
 /**
- * Cache-or-generate for the single, fixed-key ("__MARKET__") daily Market
- * Pulse briefing -- same table and TTL-based freshness check as per-ticker
- * briefings, just a longer TTL (market-wide news moves less per-minute
- * than single-stock news) and a fixed cache key instead of a ticker.
+ * Cache-or-generate for the single, fixed-key daily Today's Summary --
+ * same table and TTL-based freshness check as per-ticker briefings, just
+ * a longer TTL (market-wide news moves less per-minute than single-stock
+ * news) and a fixed cache key instead of a ticker.
  */
-export async function getOrGenerateMarketPulse(
+export async function getOrGenerateTodaysSummary(
   supabase: SupabaseClient<Database>,
-  inputs: MarketPulseInputs,
+  inputs: TodaysSummaryInputs,
   forceRefresh = false
 ): Promise<BriefingCacheResult> {
   return cacheOrGenerate(
     supabase,
-    MARKET_PULSE_TICKER_KEY,
-    MARKET_PULSE_CACHE_TTL_MS,
-    () => generateMarketPulse(inputs),
+    TODAYS_SUMMARY_CACHE_KEY,
+    TODAYS_SUMMARY_CACHE_TTL_MS,
+    () => generateTodaysSummary(inputs),
     forceRefresh
   );
 }

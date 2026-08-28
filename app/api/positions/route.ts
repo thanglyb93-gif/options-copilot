@@ -1,16 +1,27 @@
 import { NextResponse } from "next/server";
 import { getSupabaseRouteClient } from "@/lib/supabase";
 import type { PositionRow, PositionStatus, PositionType } from "@/types/database";
-import type { PositionAnalytics, PositionSummary } from "@/types/api";
-import { fetchHistoricalCloses, fetchOptionsChainWithinDays, fetchQuote } from "@/lib/yahoo";
+import type { PortfolioSummary, PositionAnalytics, PositionSummary } from "@/types/api";
+import { fetchHistoricalCloses, fetchOptionsChainWithinDays, fetchQuote, fetchQuoteSummaryExtras } from "@/lib/yahoo";
 import { earningsCooldownFlag } from "@/lib/flags";
 import {
+  assignmentOpportunityCost,
   closeSignal,
-  decayCurvePosition,
   findCurrentContract,
+  generateProfitHistory,
   itmRiskClassification,
+  maxProfitForPosition,
   profitCaptured,
+  todayMarkerForPosition,
 } from "@/lib/position-analytics";
+import {
+  betaWeightedDelta,
+  MIN_OPEN_POSITIONS_FOR_PORTFOLIO_SUMMARY,
+  type PortfolioDeltaPositionInput,
+} from "@/lib/portfolio-analytics";
+
+/** Default IV fallback when a position's own contract IV can't be read -- same fallback used for the decay curve. */
+const DEFAULT_IV_FALLBACK = 0.4;
 
 const POSITION_TYPES: PositionType[] = ["covered_call", "cash_secured_put"];
 const POSITION_STATUSES: PositionStatus[] = [
@@ -25,7 +36,10 @@ const POSITION_STATUSES: PositionStatus[] = [
 // expiration (extremely rare for this app's 30-45 DTE target band) and
 // fall back to analytics: null rather than erroring.
 const MAX_CHAIN_DAYS = 60;
-const HISTORICAL_CLOSES_DAYS = 30;
+// Wide enough to comfortably cover a position's opened_at date for this
+// app's 30-45 DTE target band (plus buffer) -- the profit trajectory
+// needs the actual entry-day close, not just a recent window.
+const HISTORICAL_CLOSES_DAYS = 60;
 
 function daysBetween(fromIso: string, toIso: string): number {
   const from = new Date(fromIso.slice(0, 10) + "T00:00:00Z").getTime();
@@ -37,15 +51,23 @@ interface TickerData {
   quote: Awaited<ReturnType<typeof fetchQuote>> | null;
   chain: Awaited<ReturnType<typeof fetchOptionsChainWithinDays>> | null;
   closes: Awaited<ReturnType<typeof fetchHistoricalCloses>>;
+  /**
+   * quote.beta is frequently absent on Yahoo's endpoint (see
+   * /api/quote's own comment on this) -- defaultKeyStatistics.beta via
+   * quoteSummary is the reliable source, so that's tried first here too.
+   */
+  beta: number | null;
 }
 
 async function gatherTickerData(ticker: string): Promise<TickerData> {
-  const [quote, chain, closes] = await Promise.all([
+  const [quote, chain, closes, extras] = await Promise.all([
     fetchQuote(ticker).catch(() => null),
     fetchOptionsChainWithinDays(ticker, MAX_CHAIN_DAYS).catch(() => null),
     fetchHistoricalCloses(ticker, HISTORICAL_CLOSES_DAYS).catch(() => []),
+    fetchQuoteSummaryExtras(ticker).catch(() => null),
   ]);
-  return { quote, chain, closes };
+  const beta = extras?.beta ?? quote?.beta ?? null;
+  return { quote, chain, closes, beta };
 }
 
 function computeAnalytics(position: PositionRow, data: TickerData): PositionAnalytics {
@@ -82,19 +104,19 @@ function computeAnalytics(position: PositionRow, data: TickerData): PositionAnal
   const profitCapturedPct =
     currentContractValue != null ? profitCaptured(position.premium_collected, currentContractValue) : null;
 
-  const decayCurve =
-    currentUnderlyingPrice != null && contract?.referencePrice != null
-      ? decayCurvePosition(
-          position.strike,
-          currentUnderlyingPrice,
-          // Solving IV from the current reference price would need a per-contract
-          // dte, which we already have -- reuse the chain's own reported IV when
-          // available, since that's already market-hours-fallback-aware upstream.
-          impliedVolFromChain(data, position) ?? 0.4,
-          Math.max(1, daysBetween(position.opened_at, position.expiration_date)),
-          position.position_type === "covered_call" ? "call" : "put"
-        )
-      : [];
+  const totalDte = Math.max(1, daysBetween(position.opened_at, position.expiration_date));
+  // Same IV source the old decay curve used -- see generateProfitHistory's
+  // doc comment on why this stands in for a true historical entry-time IV.
+  const entryIv = impliedVolFromChain(data, position) ?? DEFAULT_IV_FALLBACK;
+
+  const maxProfit = maxProfitForPosition(
+    position.position_type,
+    position.strike,
+    position.premium_collected,
+    position.contracts,
+    position.cost_basis,
+    position.shares_owned
+  );
 
   const closeSignalResult =
     profitCapturedPct != null
@@ -119,6 +141,48 @@ function computeAnalytics(position: PositionRow, data: TickerData): PositionAnal
         )
       : null;
 
+  const assignmentOpportunityCostResult =
+    itmResult != null && currentUnderlyingPrice != null && currentContractValue != null
+      ? assignmentOpportunityCost(
+          position.position_type,
+          position.strike,
+          position.premium_collected,
+          position.contracts,
+          position.cost_basis,
+          position.shares_owned,
+          currentUnderlyingPrice,
+          currentContractValue,
+          itmResult.breachPct
+        )
+      : null;
+
+  const daysElapsed = daysBetween(position.opened_at, today);
+  const todayMarker = todayMarkerForPosition(
+    daysElapsed,
+    position.position_type,
+    netCoveredPL,
+    optionLegPL
+  );
+
+  const profitHistory =
+    todayMarker != null && currentUnderlyingPrice != null
+      ? generateProfitHistory({
+          strike: position.strike,
+          entryIv,
+          totalDte,
+          daysElapsed,
+          premiumCollected: position.premium_collected,
+          contracts: position.contracts,
+          positionType: position.position_type,
+          costBasis: position.cost_basis,
+          sharesOwned: position.shares_owned,
+          closes: data.closes,
+          openedAtIso: position.opened_at,
+          currentPrice: currentUnderlyingPrice,
+          todayProfitDollars: todayMarker.profitDollars,
+        })
+      : null;
+
   return {
     dte,
     currentUnderlyingPrice,
@@ -129,9 +193,12 @@ function computeAnalytics(position: PositionRow, data: TickerData): PositionAnal
     optionLegPL,
     netCoveredPL,
     profitCapturedPct,
-    decayCurve,
+    profitHistory,
+    todayMarker,
+    maxProfit,
     closeSignal: closeSignalResult,
     itmRiskClassification: itmResult,
+    assignmentOpportunityCost: assignmentOpportunityCostResult,
   };
 }
 
@@ -176,10 +243,15 @@ export async function GET(request: Request) {
   const rows = (data ?? []) as PositionRow[];
   const openRows = rows.filter((r) => r.status === "open");
   const distinctTickers = Array.from(new Set(openRows.map((r) => r.ticker)));
+  const needsPortfolioSummary = openRows.length >= MIN_OPEN_POSITIONS_FOR_PORTFOLIO_SUMMARY;
 
-  const tickerDataEntries = await Promise.all(
-    distinctTickers.map(async (ticker) => [ticker, await gatherTickerData(ticker)] as const)
-  );
+  const [tickerDataEntries, spyQuote] = await Promise.all([
+    Promise.all(distinctTickers.map(async (ticker) => [ticker, await gatherTickerData(ticker)] as const)),
+    // Only fetched when it could actually matter -- below the 2-position
+    // threshold a portfolio summary isn't shown at all, so there's no
+    // reason to spend an extra Yahoo call on SPY's quote.
+    needsPortfolioSummary ? fetchQuote("SPY").catch(() => null) : Promise.resolve(null),
+  ]);
   const tickerDataByTicker = new Map(tickerDataEntries);
 
   const positions: PositionSummary[] = rows.map((row) => {
@@ -205,7 +277,42 @@ export async function GET(request: Request) {
     };
   });
 
-  return NextResponse.json({ positions });
+  // Below the 2-open-position threshold this stays null -- not just an
+  // empty/zero summary, genuinely absent, since it's not a meaningful
+  // number with only one position.
+  let portfolioSummary: PortfolioSummary | null = null;
+
+  if (needsPortfolioSummary && spyQuote?.regularMarketPrice != null) {
+    const spyPrice = spyQuote.regularMarketPrice;
+    const deltaInputs: PortfolioDeltaPositionInput[] = [];
+
+    for (const row of openRows) {
+      const tickerData = tickerDataByTicker.get(row.ticker);
+      const underlyingPrice = tickerData?.quote?.regularMarketPrice ?? null;
+      const beta = tickerData?.beta ?? null;
+      // Skip rather than guess -- there's no honest default for a
+      // missing beta, and a position silently dropped from the sum is
+      // better than one silently misrepresented.
+      if (tickerData == null || underlyingPrice == null || beta == null) continue;
+
+      deltaInputs.push({
+        ticker: row.ticker,
+        positionType: row.position_type,
+        strike: row.strike,
+        contracts: row.contracts,
+        dte: Math.max(0, daysBetween(new Date().toISOString(), row.expiration_date)),
+        underlyingPrice,
+        iv: impliedVolFromChain(tickerData, row) ?? DEFAULT_IV_FALLBACK,
+        beta,
+      });
+    }
+
+    if (deltaInputs.length >= MIN_OPEN_POSITIONS_FOR_PORTFOLIO_SUMMARY) {
+      portfolioSummary = betaWeightedDelta(deltaInputs, spyPrice);
+    }
+  }
+
+  return NextResponse.json({ positions, portfolioSummary });
 }
 
 export async function POST(request: Request) {

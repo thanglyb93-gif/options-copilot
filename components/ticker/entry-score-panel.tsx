@@ -3,6 +3,8 @@
 import type { FetchState } from "@/lib/use-json-fetch";
 import { combineWithStrikeCushion } from "@/lib/entry-score";
 import { formatOrdinal } from "@/lib/format";
+import { guidanceIndicatorById } from "@/lib/guidance-content";
+import { ImportanceBadge } from "@/components/shared/importance-badge";
 import type { EntryScoreResponse, IvComponentResult } from "@/types/api";
 import { SkeletonLines, ErrorNote } from "./section";
 import type { StrikeSelection } from "./strike-selector";
@@ -13,10 +15,22 @@ function tierClasses(tier: string): { text: string; border: string } {
   return { text: "text-red-400", border: "border-red-500/40" };
 }
 
-function ComponentRow({ label, detail }: { label: string; detail: React.ReactNode }) {
+function ComponentRow({
+  label,
+  detail,
+  indicatorId,
+}: {
+  label: string;
+  detail: React.ReactNode;
+  indicatorId?: string;
+}) {
+  const indicator = indicatorId ? guidanceIndicatorById(indicatorId) : undefined;
   return (
     <div className="flex items-baseline justify-between gap-2 text-sm">
-      <span className="text-muted">{label}</span>
+      <span className="flex items-center gap-1.5 text-muted">
+        {label}
+        {indicator && <ImportanceBadge tier={indicator.importanceTier} />}
+      </span>
       <span className="font-mono text-foreground">{detail}</span>
     </div>
   );
@@ -79,9 +93,14 @@ function EntryScoreCard({
   const combined = data ? combineWithStrikeCushion(data.partialTotal, matchedSelection ? cushionScoreValue : null) : null;
   const isComplete = matchedSelection != null && data != null;
 
+  const entryScoreIndicator = guidanceIndicatorById("entry-score");
+
   return (
     <div className="flex flex-col gap-3 rounded-lg border border-border bg-background p-4">
-      <span className="text-xs uppercase tracking-wide text-muted">{label}</span>
+      <span className="flex items-center gap-1.5 text-xs uppercase tracking-wide text-muted">
+        {label}
+        {entryScoreIndicator && <ImportanceBadge tier={entryScoreIndicator.importanceTier} />}
+      </span>
 
       {loading && <SkeletonLines count={4} />}
       {error && <ErrorNote message={error} />}
@@ -121,13 +140,22 @@ function EntryScoreCard({
           )}
 
           <div className="flex flex-col gap-1.5 border-t border-border pt-3">
-            <ComponentRow label="IV Component" detail={<IvComponentDetail iv={data.ivComponent} />} />
-            <ComponentRow label="Technical" detail={technicalDetail(matchedSelection)} />
+            <ComponentRow
+              label="IV Component"
+              detail={<IvComponentDetail iv={data.ivComponent} />}
+              indicatorId="iv-percentile"
+            />
+            <ComponentRow
+              label="Technical"
+              detail={technicalDetail(matchedSelection)}
+              indicatorId="technical-em-cushion"
+            />
             <ComponentRow
               label="Events"
               detail={`${(data.eventComponent.catalystScore + data.eventComponent.alignmentScore).toFixed(1)} (catalyst: ${
                 data.eventComponent.catalystScore > 0 ? "yes" : "no"
               }, lean: ${data.eventComponent.lean})`}
+              indicatorId="events"
             />
           </div>
         </>

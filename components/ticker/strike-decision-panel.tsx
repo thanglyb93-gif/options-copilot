@@ -20,6 +20,8 @@ import {
   coveredCallPL,
 } from "@/lib/options-math";
 import { formatCurrency, formatNumber, formatPercent } from "@/lib/format";
+import { guidanceIndicatorById } from "@/lib/guidance-content";
+import { ImportanceBadge } from "@/components/shared/importance-badge";
 import type { EntryScoreResponse } from "@/types/api";
 import type { StrikeSelection } from "./strike-selector";
 
@@ -49,6 +51,9 @@ export function StrikeDecisionPanel({
   putScore: EntryScoreResponse | null;
   callScore: EntryScoreResponse | null;
 }) {
+  const assignmentProbabilityIndicator = guidanceIndicatorById("assignment-probability");
+  const emCushionIndicator = guidanceIndicatorById("technical-em-cushion");
+
   // Everything below is derived directly from the top-level Strike
   // Selector's state (selection) and the live quote (currentPrice) --
   // there is no independent local copy of position type, strike,
@@ -151,7 +156,20 @@ export function StrikeDecisionPanel({
         <span className="text-muted">·</span>
         <span className="text-muted">
           premium <span className="font-mono text-foreground">{formatCurrency(selection.premium)}</span>
+          {selection.contract.spreadPct != null && selection.contract.spreadLabel != null && (
+            <span className="ml-1 font-mono">
+              · spread {selection.contract.spreadPct.toFixed(1)}% ({selection.contract.spreadLabel})
+            </span>
+          )}
+          <span className="ml-1 font-mono">
+            · OI: {selection.contract.openInterest != null ? selection.contract.openInterest.toLocaleString() : "—"} contracts
+          </span>
         </span>
+        {selection.contract.spreadLabel === "wide" && (
+          <span className="rounded border border-red-500/60 bg-red-500/15 px-1.5 py-0.5 text-[11px] font-medium text-red-300">
+            ⚠ wide spread
+          </span>
+        )}
         {selection.contract.usingLastPriceFallback && (
           <span
             className="text-xs text-muted"
@@ -170,13 +188,25 @@ export function StrikeDecisionPanel({
         specific to the selected contract.
       */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <StatCard
-          label="Assignment Probability"
-          value={selection.contract.assignmentProbability ?? "—"}
-          big
-        />
         <div className="flex flex-col gap-0.5 rounded-md border border-border bg-background px-3 py-2">
-          <span className="text-[11px] uppercase tracking-wide text-muted">EM Cushion</span>
+          <span className="flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-muted">
+            Assignment Probability
+            {assignmentProbabilityIndicator && (
+              <ImportanceBadge tier={assignmentProbabilityIndicator.importanceTier} />
+            )}
+          </span>
+          <span className="font-mono text-2xl font-semibold text-foreground">
+            {selection.contract.assignmentProbability ?? "—"}
+          </span>
+          {selection.contract.probabilityOfTouch != null && (
+            <span className="text-xs text-muted">Touch: {selection.contract.probabilityOfTouch}</span>
+          )}
+        </div>
+        <div className="flex flex-col gap-0.5 rounded-md border border-border bg-background px-3 py-2">
+          <span className="flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-muted">
+            EM Cushion
+            {emCushionIndicator && <ImportanceBadge tier={emCushionIndicator.importanceTier} />}
+          </span>
           <span className="font-mono text-2xl font-semibold text-foreground">
             {selection.contract.emCushion != null ? `${selection.contract.emCushion.toFixed(2)}x` : "—"}
           </span>

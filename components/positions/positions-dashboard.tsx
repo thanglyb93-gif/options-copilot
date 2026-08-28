@@ -6,16 +6,22 @@ import { SkeletonLines, ErrorNote } from "@/components/ticker/section";
 import { AddPositionForm } from "./add-position-form";
 import { PositionCard } from "./position-card";
 import { ClosedPositionRow } from "./closed-position-row";
+import { PortfolioSummaryBar } from "./portfolio-summary-bar";
+import type { PortfolioSummary } from "@/types/api";
 
 export function PositionsDashboard() {
   const [positions, setPositions] = useState<PositionSummary[] | null>(null);
+  const [portfolioSummary, setPortfolioSummary] = useState<PortfolioSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showClosed, setShowClosed] = useState(false);
 
   const load = useCallback(() => {
     fetch("/api/positions")
       .then((res) => res.json())
-      .then((body: PositionsListResponse) => setPositions(body.positions ?? []))
+      .then((body: PositionsListResponse) => {
+        setPositions(body.positions ?? []);
+        setPortfolioSummary(body.portfolioSummary ?? null);
+      })
       .catch(() => setError("Couldn't load positions"));
   }, []);
 
@@ -35,6 +41,8 @@ export function PositionsDashboard() {
 
       {error && <ErrorNote message={error} />}
       {positions == null && !error && <SkeletonLines count={4} />}
+
+      {portfolioSummary && <PortfolioSummaryBar summary={portfolioSummary} />}
 
       {positions != null && open.length === 0 && (
         <div className="rounded-lg border border-dashed border-border p-8 text-center">

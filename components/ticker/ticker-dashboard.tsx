@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { useJsonFetch } from "@/lib/use-json-fetch";
 import type {
@@ -34,6 +35,13 @@ export function TickerDashboard({ symbol }: { symbol: string }) {
 
   return (
     <div className="flex flex-col gap-4">
+      <Link
+        href="/"
+        className="flex w-fit items-center gap-1 text-sm text-muted hover:text-foreground"
+      >
+        ← Dashboard
+      </Link>
+
       <h1 className="font-mono text-xl font-semibold text-foreground">{symbol}</h1>
 
       <Section title="Overview">

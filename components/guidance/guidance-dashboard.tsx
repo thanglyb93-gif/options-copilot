@@ -32,9 +32,8 @@ export function GuidanceDashboard() {
 
       <Section title="Exit Flow">
         <p className="mb-3 text-xs text-muted">
-          How an open position becomes a close/hold decision. Boxes with a dashed border describe
-          logic that isn&rsquo;t built yet (see &ldquo;Planned&rdquo; entries in the glossary above) — the flow
-          itself is the intended design.
+          How an open position becomes a close/hold decision. Click any box to jump to that
+          indicator below.
         </p>
         <FlowDiagram stages={EXIT_FLOW_STAGES} />
       </Section>
@@ -71,8 +70,8 @@ export function GuidanceDashboard() {
             rather than holding for the last few cents while decay slows and event risk remains —
             and separately, to reassess as DTE shrinks, since theta decay is not linear and
             accelerates in the final weeks. Profit-Captured % and Theta Decay Curve position
-            (see Position-Management indicators above) are how this tool is designed to
-            systematize that discipline once built.
+            (see Position-Management indicators above) are how this tool systematizes that
+            discipline on the Positions page.
           </p>
           <p>
             <strong>Sell-the-news vs. real-breakdown framework.</strong> When a position moves

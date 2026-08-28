@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { GuidanceIndicator } from "@/lib/guidance-content";
+import { ImportanceBadge } from "@/components/shared/importance-badge";
 
 function Field({ label, value }: { label: string; value: string }) {
   return (
@@ -27,6 +28,7 @@ export function IndicatorCard({ indicator }: { indicator: GuidanceIndicator }) {
       >
         <span className="flex items-center gap-2">
           <span className="font-medium text-foreground">{indicator.name}</span>
+          <ImportanceBadge tier={indicator.importanceTier} />
           {indicator.status === "planned" && (
             <span className="rounded border border-border px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted">
               Planned

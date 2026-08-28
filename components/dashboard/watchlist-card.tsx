@@ -3,8 +3,13 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { useJsonFetch } from "@/lib/use-json-fetch";
-import type { WatchlistRow, WatchlistSummaryResponse } from "@/types/api";
+import type { IvRankSummary, WatchlistRow, WatchlistSummaryResponse } from "@/types/api";
 import { formatCurrency, formatPercent } from "@/lib/format";
+
+function formatIvRank(ivRank: IvRankSummary): string {
+  if (ivRank.percentile != null) return `${Math.round(ivRank.percentile)}%ile`;
+  return `${ivRank.count}d/${ivRank.needed}`;
+}
 
 export function WatchlistCard({
   row,
@@ -83,46 +88,24 @@ export function WatchlistCard({
 
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
             <span>
-              % from 52w high:{" "}
+              IV Rank:{" "}
               <span className="font-mono text-foreground">
-                {formatPercent(summary.data.percentFrom52wHigh)}
+                {formatIvRank(summary.data.ivRank)}
               </span>
             </span>
             <span>
-              {summary.data.ivHvRatio != null ? (
-                <>
-                  IV/HV:{" "}
-                  <span className="font-mono text-foreground">
-                    {summary.data.ivHvRatio.toFixed(2)}
-                  </span>
-                </>
-              ) : summary.data.hv30 != null ? (
-                <>
-                  30d HV:{" "}
-                  <span className="font-mono text-foreground">
-                    {formatPercent(summary.data.hv30 * 100, 0)}
-                  </span>{" "}
-                  <span title="Front-month IV is currently unreliable or unavailable (no live market)">
-                    (IV unavailable)
-                  </span>
-                </>
-              ) : (
-                <>IV/HV: —</>
-              )}
+              Max Pain:{" "}
+              <span className="font-mono text-foreground">
+                {summary.data.maxPainStrike ?? "—"}
+              </span>
+            </span>
+            <span>
+              P/C:{" "}
+              <span className="font-mono text-foreground">
+                {summary.data.putCallRatio != null ? summary.data.putCallRatio.toFixed(2) : "—"}
+              </span>
             </span>
           </div>
-
-          {!summary.data.ivHistory.hasEnoughHistory && (
-            <span className="text-xs text-muted">
-              IV rank: building history ({summary.data.ivHistory.count}/{summary.data.ivHistory.needed})
-            </span>
-          )}
-
-          {summary.data.earningsCooldownFlagged && (
-            <span className="w-fit rounded border border-red-500/40 bg-red-500/10 px-2 py-0.5 text-xs text-red-300">
-              Earnings cooldown
-            </span>
-          )}
         </>
       )}
     </div>

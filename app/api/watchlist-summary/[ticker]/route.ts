@@ -1,69 +1,37 @@
 import { NextResponse } from "next/server";
-import {
-  fetchQuote,
-  fetchHistoricalCloses,
-  fetchTargetExpirationChain,
-} from "@/lib/yahoo";
-import { getFinnhubClient } from "@/lib/finnhub";
+import { fetchQuote, fetchTargetExpirationChain, fetchNearestExpirationChain } from "@/lib/yahoo";
 import { getSupabaseRouteClient } from "@/lib/supabase";
-import { earningsCooldownFlag, unreliableIvFlag } from "@/lib/flags";
-import { atmImpliedVolatility, historicalVolatility } from "@/lib/volatility";
-
-const MIN_HISTORY_DAYS = 20;
-
-function toIsoDate(date: Date): string {
-  return date.toISOString().slice(0, 10);
-}
+import { unreliableIvFlag } from "@/lib/flags";
+import { atmImpliedVolatility } from "@/lib/volatility";
+import { scoreIvComponent, IV_HISTORY_MIN_ROWS } from "@/lib/entry-score";
+import { buildStrikeRows, calculateMaxPain, putCallRatio } from "@/lib/max-pain";
 
 export async function GET(
   _request: Request,
   { params }: { params: { ticker: string } }
 ) {
   const ticker = params.ticker.toUpperCase();
+  const supabase = getSupabaseRouteClient();
 
   try {
-    const finnhub = getFinnhubClient();
-    const supabase = getSupabaseRouteClient();
-    const today = new Date();
-    const horizon = new Date(today.getTime() + 120 * 24 * 60 * 60 * 1000);
-
-    const [quote, closes, calendar, targetChain, ivHistoryCount] = await Promise.all([
+    const [quote, targetChain, nearestChain, ivHistory] = await Promise.all([
       fetchQuote(ticker),
-      fetchHistoricalCloses(ticker, 45),
-      finnhub.getEarningsCalendar(ticker, toIsoDate(today), toIsoDate(horizon)),
+      // Front-month (~37 DTE) IV, same expiration lib/iv-snapshot's cron
+      // stores into iv_history -- keeps "current IV" comparable to the
+      // historical series it's ranked against.
       fetchTargetExpirationChain(ticker),
+      // Nearest expiration, same as /api/maxpain -- Max Pain and Put/Call
+      // Ratio reuse that exact definition so this card's numbers match
+      // what the ticker page itself shows.
+      fetchNearestExpirationChain(ticker),
       supabase
         .from("iv_history")
-        .select("id", { count: "exact", head: true })
-        .eq("ticker", ticker),
+        .select("implied_volatility_avg")
+        .eq("ticker", ticker)
+        .order("date", { ascending: true }),
     ]);
 
-    const price = quote.regularMarketPrice ?? null;
-    const fiftyTwoWeekHigh = quote.fiftyTwoWeekHigh ?? null;
-    const percentFrom52wHigh =
-      price != null && fiftyTwoWeekHigh
-        ? ((price - fiftyTwoWeekHigh) / fiftyTwoWeekHigh) * 100
-        : null;
-
-    const upcoming = calendar.earningsCalendar
-      .filter((event) => event.symbol === ticker)
-      .sort((a, b) => a.date.localeCompare(b.date))[0];
-
-    const daysUntilEarnings = upcoming
-      ? Math.max(
-          0,
-          Math.round(
-            (new Date(upcoming.date).getTime() - today.getTime()) /
-              (24 * 60 * 60 * 1000)
-          )
-        )
-      : null;
-
-    const priceMoveFlag = earningsCooldownFlag(closes).flagged;
-    const earningsSoon = daysUntilEarnings != null && daysUntilEarnings <= 3;
-
-    const hv30 = historicalVolatility(closes, 30);
-    const atmIv =
+    const currentIv =
       targetChain.underlyingPrice != null
         ? atmImpliedVolatility({
             underlyingPrice: targetChain.underlyingPrice,
@@ -71,25 +39,29 @@ export async function GET(
             puts: targetChain.puts.filter((p) => !unreliableIvFlag(p)),
           })
         : null;
-    const ivHvRatio = atmIv != null && hv30 != null && hv30 > 0 ? atmIv / hv30 : null;
 
-    const count = ivHistoryCount.count ?? 0;
+    const historicalValues = (ivHistory.data ?? [])
+      .map((r) => r.implied_volatility_avg)
+      .filter((v): v is number => typeof v === "number");
+
+    const ivComponent = scoreIvComponent({ currentIv, historicalValues });
+
+    const strikes = buildStrikeRows(nearestChain.calls, nearestChain.puts);
+    const maxPainStrike = calculateMaxPain(strikes);
+    const putCall = putCallRatio(strikes);
 
     return NextResponse.json({
       ticker,
       name: quote.longName ?? quote.shortName ?? ticker,
-      price,
-      dayChange: quote.regularMarketChange ?? null,
+      price: quote.regularMarketPrice ?? null,
       dayChangePercent: quote.regularMarketChangePercent ?? null,
-      percentFrom52wHigh,
-      earningsCooldownFlagged: priceMoveFlag || earningsSoon,
-      hv30,
-      ivHvRatio,
-      ivHistory: {
-        count,
-        needed: MIN_HISTORY_DAYS,
-        hasEnoughHistory: count >= MIN_HISTORY_DAYS,
+      ivRank: {
+        count: ivComponent.realHistoryCount,
+        needed: IV_HISTORY_MIN_ROWS,
+        percentile: ivComponent.percentile,
       },
+      maxPainStrike,
+      putCallRatio: putCall,
       asOf: new Date().toISOString(),
     });
   } catch (error) {

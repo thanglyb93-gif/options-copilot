@@ -234,3 +234,53 @@ export function findClosestDteIndex(dtes: number[], target = 37): number {
 export function assignmentProbabilityLabel(delta: number): string {
   return `~${Math.round(Math.abs(delta) * 100)}%`;
 }
+
+/**
+ * Approximate probability the underlying touches this strike at any
+ * point before expiration (not just at expiry) -- the standard trader's
+ * rule of thumb of roughly double the option's delta. This is an
+ * approximation, not exact math (a true probability-of-touch is a
+ * barrier-option calculation); explicitly capped at 100% since the raw
+ * 2x formula can exceed it for high-delta contracts.
+ */
+export function probabilityOfTouch(delta: number): number {
+  return Math.min(2 * Math.abs(delta), 1);
+}
+
+export type SpreadLabel = "tight" | "moderate" | "wide";
+
+export interface SpreadQualityResult {
+  spreadPct: number;
+  label: SpreadLabel;
+}
+
+/**
+ * Bid-ask spread band cutoffs, as a % of mid price. Adjustable defaults,
+ * not fixed rules -- tune to taste.
+ */
+export const SPREAD_TIGHT_MAX_PCT = 5;
+export const SPREAD_MODERATE_MAX_PCT = 15;
+
+/**
+ * Bid-ask spread as a % of mid price, banded into a quick-read liquidity
+ * label. Returns null for anything that isn't a genuinely live,
+ * two-sided market (bid/ask missing, zero, or crossed) -- there's no
+ * meaningful spread to compute from a single lastPrice fallback quote
+ * (Phase 7's market-closed path), so this never fabricates one. Callers
+ * can call this unconditionally rather than needing to gate first.
+ */
+export function spreadQuality(bid: number, ask: number): SpreadQualityResult | null {
+  if (bid <= 0 || ask <= 0 || ask < bid) return null;
+  const mid = (bid + ask) / 2;
+  if (mid <= 0) return null;
+
+  const spreadPct = ((ask - bid) / mid) * 100;
+  const label: SpreadLabel =
+    spreadPct < SPREAD_TIGHT_MAX_PCT
+      ? "tight"
+      : spreadPct <= SPREAD_MODERATE_MAX_PCT
+        ? "moderate"
+        : "wide";
+
+  return { spreadPct, label };
+}

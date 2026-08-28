@@ -1,35 +1,6 @@
 import { NextResponse } from "next/server";
 import { fetchNearestExpirationChain } from "@/lib/yahoo";
-import { calculateMaxPain, type StrikeOpenInterest } from "@/lib/max-pain";
-
-function buildStrikeRows(
-  calls: { strike: number; openInterest?: number }[],
-  puts: { strike: number; openInterest?: number }[]
-): StrikeOpenInterest[] {
-  const byStrike = new Map<number, StrikeOpenInterest>();
-
-  for (const call of calls) {
-    const row = byStrike.get(call.strike) ?? {
-      strike: call.strike,
-      callOpenInterest: 0,
-      putOpenInterest: 0,
-    };
-    row.callOpenInterest += call.openInterest ?? 0;
-    byStrike.set(call.strike, row);
-  }
-
-  for (const put of puts) {
-    const row = byStrike.get(put.strike) ?? {
-      strike: put.strike,
-      callOpenInterest: 0,
-      putOpenInterest: 0,
-    };
-    row.putOpenInterest += put.openInterest ?? 0;
-    byStrike.set(put.strike, row);
-  }
-
-  return Array.from(byStrike.values()).sort((a, b) => a.strike - b.strike);
-}
+import { buildStrikeRows, calculateMaxPain } from "@/lib/max-pain";
 
 export async function GET(
   _request: Request,

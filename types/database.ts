@@ -8,6 +8,7 @@
  */
 
 import type { BriefingContent } from "@/lib/briefing";
+import type { HeadlineCategory, HeadlineLevel } from "@/lib/headline-classification";
 
 export type PositionType = "covered_call" | "cash_secured_put";
 
@@ -51,6 +52,18 @@ export type BriefingRow = {
   ticker: string;
   content: BriefingContent;
   generated_at: string;
+};
+
+/**
+ * Permanent, no-TTL cache: a headline's classification never changes once
+ * published. `id` is a stable identifier (article URL, or a hash of
+ * headline+date -- see lib/headline-classification-service.ts).
+ */
+export type HeadlineClassificationRow = {
+  id: string;
+  level: HeadlineLevel;
+  category: HeadlineCategory;
+  classified_at: string;
 };
 
 export interface Database {
@@ -107,6 +120,13 @@ export interface Database {
         Insert: Partial<Pick<BriefingRow, "id" | "generated_at">> &
           Pick<BriefingRow, "ticker" | "content">;
         Update: Partial<BriefingRow>;
+        Relationships: [];
+      };
+      headline_classifications: {
+        Row: HeadlineClassificationRow;
+        Insert: Partial<Pick<HeadlineClassificationRow, "classified_at">> &
+          Pick<HeadlineClassificationRow, "id" | "level" | "category">;
+        Update: Partial<HeadlineClassificationRow>;
         Relationships: [];
       };
     };

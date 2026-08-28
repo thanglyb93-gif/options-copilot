@@ -1,5 +1,7 @@
 import type { QuoteResponse } from "@/types/api";
 import { describeTrend } from "@/lib/trend";
+import { guidanceIndicatorById } from "@/lib/guidance-content";
+import { ImportanceBadge } from "@/components/shared/importance-badge";
 import {
   formatCompactNumber,
   formatCurrency,
@@ -27,6 +29,7 @@ export function QuoteHeader({ quote }: { quote: QuoteResponse }) {
           sma200: quote.sma200,
         })
       : null;
+  const trendIndicator = guidanceIndicatorById("trend");
 
   return (
     <div className="flex flex-col gap-4">
@@ -61,7 +64,12 @@ export function QuoteHeader({ quote }: { quote: QuoteResponse }) {
         <Stat label="Beta" value={quote.beta != null ? quote.beta.toFixed(2) : "—"} />
       </div>
 
-      {trend && <p className="text-sm text-foreground">{trend}</p>}
+      {trend && (
+        <p className="flex items-center gap-2 text-sm text-foreground">
+          {trend}
+          {trendIndicator && <ImportanceBadge tier={trendIndicator.importanceTier} />}
+        </p>
+      )}
     </div>
   );
 }

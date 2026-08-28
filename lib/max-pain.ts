@@ -48,3 +48,47 @@ export function calculateMaxPain(rows: StrikeOpenInterest[]): number | null {
 
   return maxPainStrike;
 }
+
+/** Aggregates a chain's calls/puts into per-strike open interest, sorted by strike. */
+export function buildStrikeRows(
+  calls: { strike: number; openInterest?: number }[],
+  puts: { strike: number; openInterest?: number }[]
+): StrikeOpenInterest[] {
+  const byStrike = new Map<number, StrikeOpenInterest>();
+
+  for (const call of calls) {
+    const row = byStrike.get(call.strike) ?? {
+      strike: call.strike,
+      callOpenInterest: 0,
+      putOpenInterest: 0,
+    };
+    row.callOpenInterest += call.openInterest ?? 0;
+    byStrike.set(call.strike, row);
+  }
+
+  for (const put of puts) {
+    const row = byStrike.get(put.strike) ?? {
+      strike: put.strike,
+      callOpenInterest: 0,
+      putOpenInterest: 0,
+    };
+    row.putOpenInterest += put.openInterest ?? 0;
+    byStrike.set(put.strike, row);
+  }
+
+  return Array.from(byStrike.values()).sort((a, b) => a.strike - b.strike);
+}
+
+/**
+ * Put/Call open-interest ratio across a chain's strikes: total put OI /
+ * total call OI. A widely-used sentiment gauge -- above 1 skews toward
+ * put positioning (hedging/bearish lean), below 1 toward calls. Null
+ * when there's no call open interest to divide by (can't compute a
+ * meaningful ratio, not a fabricated 0).
+ */
+export function putCallRatio(rows: StrikeOpenInterest[]): number | null {
+  const totalCallOi = rows.reduce((sum, r) => sum + r.callOpenInterest, 0);
+  const totalPutOi = rows.reduce((sum, r) => sum + r.putOpenInterest, 0);
+  if (totalCallOi <= 0) return null;
+  return totalPutOi / totalCallOi;
+}

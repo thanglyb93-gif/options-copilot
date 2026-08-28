@@ -1,24 +1,24 @@
 "use client";
 
-import type { MarketPulseResponse } from "@/types/api";
+import type { TodaysSummaryResponse } from "@/types/api";
 import { formatRelativeTime } from "@/lib/format";
-import { composeMarketPulse } from "@/lib/market-pulse-read";
+import { composeTodaysSummary } from "@/lib/todays-summary-read";
 import { SkeletonLines, ErrorNote } from "@/components/ticker/section";
 
-export function MarketPulsePanel({
+export function TodaysSummaryPanel({
   data,
   loading,
   refreshing,
   error,
   onRefresh,
 }: {
-  data: MarketPulseResponse | null;
+  data: TodaysSummaryResponse | null;
   loading: boolean;
   refreshing: boolean;
   error: string | null;
   onRefresh: () => void;
 }) {
-  const composed = data ? composeMarketPulse(data.content) : null;
+  const composed = data ? composeTodaysSummary(data.content) : null;
 
   return (
     <div className="flex flex-col gap-3">

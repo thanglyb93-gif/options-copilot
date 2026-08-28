@@ -8,6 +8,8 @@ import type {
   PositionsListResponse,
 } from "@/types/api";
 import { formatMonthDay } from "@/lib/format";
+import { guidanceIndicatorById } from "@/lib/guidance-content";
+import { ImportanceBadge } from "@/components/shared/importance-badge";
 
 export interface StrikeSelection {
   positionType: "covered_call" | "cash_secured_put";
@@ -162,6 +164,7 @@ export function StrikeSelector({
     maxPain && expiration && maxPain.expirationDate === expiration.expirationDate
       ? maxPain.maxPainStrike
       : null;
+  const maxPainIndicator = guidanceIndicatorById("max-pain");
 
   return (
     <div className="flex flex-col gap-2">
@@ -246,8 +249,9 @@ export function StrikeSelector({
       )}
 
       {maxPainStrike != null ? (
-        <span className="text-xs text-muted">
+        <span className="flex items-center gap-1.5 text-xs text-muted">
           Max pain for this expiration: <span className="font-mono text-foreground">{maxPainStrike}</span>
+          {maxPainIndicator && <ImportanceBadge tier={maxPainIndicator.importanceTier} />}
         </span>
       ) : (
         maxPain && (

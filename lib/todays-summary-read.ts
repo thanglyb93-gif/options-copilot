@@ -1,5 +1,5 @@
 /**
- * Composes the Market Pulse panel's paragraph from already-fetched
+ * Composes Today's Summary panel's paragraph from already-fetched
  * content. Pure formatting, no I/O -- mirrors lib/market-read.ts's role
  * for the per-ticker Market Read section, minus the earnings sentence
  * (there's no single ticker's earnings date to fold in here).
@@ -7,7 +7,7 @@
 
 import type { BriefingContent, DirectionalLean } from "@/types/api";
 
-export interface MarketPulseComposition {
+export interface TodaysSummaryComposition {
   /** Fact-plus-source sentences. */
   sentences: string[];
   /** The conclusion sentence's content, without the "Net read:" prefix. */
@@ -26,7 +26,7 @@ function factSentence(fact: string, source: string): string {
   return `${trimmed} (${source}).`;
 }
 
-export function composeMarketPulse(content: BriefingContent): MarketPulseComposition {
+export function composeTodaysSummary(content: BriefingContent): TodaysSummaryComposition {
   const sentences = content.bullets.slice(0, 5).map((b) => factSentence(b.fact, b.source));
   const netRead = `${LEAN_PHRASE[content.directionalLean.lean]} — ${content.directionalLean.rationale}`;
 

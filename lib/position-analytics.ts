@@ -8,7 +8,7 @@
 
 import type { OptionsChainResult } from "./yahoo";
 import type { OptionType } from "./options-math";
-import { blackScholesPrice } from "./options-math";
+import { blackScholesPrice, cashSecuredPutPL, coveredCallPL } from "./options-math";
 import { assessContractReliability, type ChainContractQuoteLike } from "./flags";
 
 export type TradeDirection = "put" | "call";
@@ -104,42 +104,229 @@ export function profitCaptured(premiumCollected: number, currentBuybackCost: num
 }
 
 // ---------------------------------------------------------------------------
-// 3. Theta decay curve
+// 3. Profit history -- one $ P/L line in two segments: REAL (reconstructed
+// from actual historical closes, entry through today) and PROJECTED (today
+// through expiration, price held flat at today's actual level). Replaces
+// Phase 20's four theoretical EM-scenario lines, which real usage found
+// less useful than seeing what actually happened plus one simple forward
+// look.
 // ---------------------------------------------------------------------------
 
-export interface DecayCurvePoint {
-  dte: number;
-  theoreticalValue: number;
+export interface ProfitHistoryPoint {
+  day: number;
+  profitDollars: number;
+}
+
+export interface ProfitHistoryResult {
+  /** Actual reconstructed P/L, day 0 (entry) through today (inclusive) -- solid segment. */
+  real: ProfitHistoryPoint[];
+  /** Forward projection, today (inclusive, same point as real's last entry) through expiration, price held flat at today's actual level -- dashed segment. */
+  projected: ProfitHistoryPoint[];
+}
+
+export interface ProfitHistoryClose {
+  date: string; // "YYYY-MM-DD"
+  close: number;
+}
+
+export interface ProfitHistoryInput {
+  strike: number;
+  /**
+   * IV held constant for the whole walk (both segments). In practice
+   * this is the position's current chain IV, standing in for a true
+   * historical entry-time IV -- no per-contract IV history is stored,
+   * so this is the best available anchor (same simplification the
+   * Phase 20 scenario lines used). Real IV would also drift day to
+   * day; modeling that adds real complexity for a modest accuracy
+   * gain over this simpler, clearly-labeled approximation.
+   */
+  entryIv: number;
+  /** Full days from entry to expiration (not remaining DTE). */
+  totalDte: number;
+  /** Today's day-offset from entry, clamped to [0, totalDte]. */
+  daysElapsed: number;
+  /** Per-share premium collected. */
+  premiumCollected: number;
+  contracts: number;
+  positionType: "covered_call" | "cash_secured_put";
+  /** Covered call only. */
+  costBasis: number | null;
+  /** Covered call only -- actual owned shares, which may not exactly equal contracts * 100. */
+  sharesOwned: number | null;
+  /** Real daily closes covering at least [opened_at, today] -- already fetched elsewhere for entry-price lookup, not a new data source. */
+  closes: ProfitHistoryClose[];
+  openedAtIso: string;
+  /** Today's live underlying price -- anchors the flat projected segment. */
+  currentPrice: number;
+  /** Today's real (non-theoretical) $ profit -- reused verbatim as the boundary point between segments, not recomputed via Black-Scholes, so the two segments meet without a visual jump. */
+  todayProfitDollars: number;
+  riskFreeRate?: number;
+}
+
+function daysBetweenDates(fromIso: string, toIso: string): number {
+  const from = new Date(fromIso.slice(0, 10) + "T00:00:00Z").getTime();
+  const to = new Date(toIso.slice(0, 10) + "T00:00:00Z").getTime();
+  return Math.round((to - from) / (24 * 60 * 60 * 1000));
 }
 
 /**
- * Walks DTE from `originalDte` down to 0, computing this position's own
- * theoretical option value at each step via Black-Scholes -- a real,
- * position-specific curve, not a hardcoded example table. Holds spot
- * price and IV constant across the walk deliberately: this illustrates
- * time decay in isolation, not a full price-path simulation.
+ * $ profit at a given underlying price and remaining DTE -- the same
+ * direction-aware formula for both segments: option leg alone for a
+ * cash-secured put, option leg plus stock leg (net covered P/L) for a
+ * covered call. Never the option leg alone for a covered position.
  */
-export function decayCurvePosition(
+function profitAtPrice(
+  price: number,
+  remainingDte: number,
   strike: number,
-  currentPrice: number,
-  iv: number,
-  originalDte: number,
+  entryIv: number,
   optionType: OptionType,
-  riskFreeRate = 0.04
-): DecayCurvePoint[] {
-  const points: DecayCurvePoint[] = [];
-  for (let d = originalDte; d >= 0; d--) {
-    const theoreticalValue = blackScholesPrice({
-      spot: currentPrice,
+  premiumCollected: number,
+  contracts: number,
+  positionType: "covered_call" | "cash_secured_put",
+  costBasis: number | null,
+  sharesOwned: number | null,
+  riskFreeRate: number
+): number {
+  const theoreticalOptionValue = blackScholesPrice({
+    spot: price,
+    strike,
+    dte: remainingDte,
+    volatility: entryIv,
+    optionType,
+    riskFreeRate,
+  });
+  const optionLegProfit = (premiumCollected - theoreticalOptionValue) * 100 * contracts;
+
+  if (positionType !== "covered_call") return optionLegProfit;
+  const stockProfit = costBasis != null && sharesOwned != null ? (price - costBasis) * sharesOwned : 0;
+  return optionLegProfit + stockProfit;
+}
+
+/**
+ * Builds the real (entry-to-today, from actual historical closes) and
+ * projected (today-to-expiration, price held flat) segments of the
+ * Profit History chart.
+ *
+ * Real segment: for each actual trading-day close strictly before
+ * today, reconstructs that day's option value via Black-Scholes at
+ * that day's real price and remaining DTE (entry IV held constant),
+ * then converts to $ profit. Non-trading days (weekends/holidays)
+ * simply have no close and are skipped, not fabricated. Today itself
+ * is appended using the real, already-computed current $ profit
+ * (todayProfitDollars) rather than a Black-Scholes reconstruction, so
+ * the line reflects the actual live market quote at the boundary.
+ *
+ * Projected segment: starts at that same today point, then walks
+ * forward to expiration with the underlying held flat at today's
+ * actual price, recomputing Black-Scholes value at each shrinking DTE.
+ */
+export function generateProfitHistory(input: ProfitHistoryInput): ProfitHistoryResult {
+  const {
+    strike,
+    entryIv,
+    totalDte,
+    daysElapsed,
+    premiumCollected,
+    contracts,
+    positionType,
+    costBasis,
+    sharesOwned,
+    closes,
+    openedAtIso,
+    currentPrice,
+    todayProfitDollars,
+    riskFreeRate = 0.04,
+  } = input;
+
+  const optionType: OptionType = positionType === "covered_call" ? "call" : "put";
+  const today = Math.max(0, Math.min(daysElapsed, totalDte));
+
+  const real: ProfitHistoryPoint[] = [];
+  for (const c of closes) {
+    const day = daysBetweenDates(openedAtIso, c.date);
+    if (day < 0 || day >= today) continue;
+    const profitDollars = profitAtPrice(
+      c.close,
+      totalDte - day,
       strike,
-      dte: d,
-      volatility: iv,
+      entryIv,
       optionType,
-      riskFreeRate,
-    });
-    points.push({ dte: d, theoreticalValue });
+      premiumCollected,
+      contracts,
+      positionType,
+      costBasis,
+      sharesOwned,
+      riskFreeRate
+    );
+    real.push({ day, profitDollars });
   }
-  return points;
+  real.sort((a, b) => a.day - b.day);
+  real.push({ day: today, profitDollars: todayProfitDollars });
+
+  const projected: ProfitHistoryPoint[] = [{ day: today, profitDollars: todayProfitDollars }];
+  for (let day = today + 1; day <= totalDte; day++) {
+    const profitDollars = profitAtPrice(
+      currentPrice,
+      totalDte - day,
+      strike,
+      entryIv,
+      optionType,
+      premiumCollected,
+      contracts,
+      positionType,
+      costBasis,
+      sharesOwned,
+      riskFreeRate
+    );
+    projected.push({ day, profitDollars });
+  }
+
+  return { real, projected };
+}
+
+export interface ProfitTrajectoryTodayMarker {
+  day: number;
+  profitDollars: number;
+}
+
+/**
+ * The chart's one real (non-theoretical) data point: today's actual P/L,
+ * reusing the already-computed live figures (netCoveredPL for a covered
+ * call, optionLegPL for a cash-secured put) rather than recomputing
+ * anything.
+ */
+export function todayMarkerForPosition(
+  daysElapsed: number,
+  positionType: "covered_call" | "cash_secured_put",
+  netCoveredPL: number | null,
+  optionLegPL: number | null
+): ProfitTrajectoryTodayMarker | null {
+  const profitDollars = positionType === "covered_call" ? netCoveredPL : optionLegPL;
+  if (profitDollars == null) return null;
+  return { day: Math.max(0, daysElapsed), profitDollars };
+}
+
+/**
+ * Max profit at expiration (settlement exactly at strike) -- reuses the
+ * same P/L formulas lib/options-math.ts already provides for the
+ * pre-trade Strike Selector, rather than a new max-profit calculation.
+ * Powers the chart's "100% target" reference line.
+ */
+export function maxProfitForPosition(
+  positionType: "covered_call" | "cash_secured_put",
+  strike: number,
+  premiumCollected: number,
+  contracts: number,
+  costBasis: number | null,
+  sharesOwned: number | null
+): number | null {
+  const totalPremium = premiumCollected * 100 * contracts;
+  if (positionType === "cash_secured_put") {
+    return cashSecuredPutPL(strike, strike, totalPremium, 100 * contracts);
+  }
+  if (costBasis == null || sharesOwned == null) return null;
+  return coveredCallPL(strike, strike, costBasis, sharesOwned, totalPremium);
 }
 
 // ---------------------------------------------------------------------------
@@ -275,6 +462,123 @@ export function itmRiskClassification(
   }
 
   return { classification, recommendedAction, reasoning, breachPct };
+}
+
+// ---------------------------------------------------------------------------
+// 4b. Assignment opportunity cost -- quantified comparison for an
+// in-the-money position: what assignment locks in vs. what closing now
+// (and either buying fresh, for a put, or keeping the shares, for a
+// call) would look like. Purely factual numbers + a descriptive
+// narrative -- never a directive. Complements itmRiskClassification
+// above (hold/close read), doesn't replace it.
+// ---------------------------------------------------------------------------
+
+function fmtDollars(value: number): string {
+  const sign = value < 0 ? "-" : "";
+  return `${sign}$${Math.abs(value).toFixed(2)}`;
+}
+
+export interface AssignmentOpportunityCostPut {
+  positionType: "cash_secured_put";
+  ifAssigned: {
+    /** strike - premiumCollected, per share. */
+    effectiveCostBasis: number;
+  };
+  ifCloseNow: {
+    /** Total $ -- (premiumCollected - costToCloseNow) * 100 * contracts. Likely negative (a loss) for an ITM put. */
+    realizedPL: number;
+    /** Per share -- currentPrice, if shares were bought fresh at today's price instead. */
+    hypotheticalFreshBasis: number;
+  };
+  /** effectiveCostBasis - hypotheticalFreshBasis, per share. Positive means assignment leaves a worse (higher) cost basis than closing now and buying fresh. */
+  costBasisDelta: number;
+  narrative: string;
+}
+
+export interface AssignmentOpportunityCostCall {
+  positionType: "covered_call";
+  ifAssigned: {
+    /** Per share -- the strike, capped. */
+    proceeds: number;
+    /** Total $ -- (strike - costBasis) * shares + premiumCollected * 100 * contracts (same formula as maxProfitForPosition). */
+    realizedGain: number;
+  };
+  ifCloseNow: {
+    /** Total $, option leg only -- (premiumCollected - costToCloseNow) * 100 * contracts. Likely negative (a loss) for an ITM call. */
+    realizedPL: number;
+    /** Total $ -- currentPrice * sharesOwned, value of the shares retained. */
+    sharesRetainedValue: number;
+  };
+  /** Total $ -- (currentPrice - strike) * sharesOwned. Upside left on the table if assigned instead of closing and keeping the shares. */
+  upsideForgoneIfAssigned: number;
+  narrative: string;
+}
+
+export type AssignmentOpportunityCostResult = AssignmentOpportunityCostPut | AssignmentOpportunityCostCall;
+
+/**
+ * Only meaningful once a position is genuinely in-the-money, not at a
+ * razor-thin breach -- reuses itmRiskClassification's own
+ * SELL_THE_NEWS_MAX_BREACH_PCT threshold as that "meaningful" cutoff
+ * (rather than inventing a new one), and takes `breachPct` as an input
+ * computed by that same function, not recomputed here.
+ */
+export function assignmentOpportunityCost(
+  positionType: "covered_call" | "cash_secured_put",
+  strike: number,
+  premiumCollected: number,
+  contracts: number,
+  costBasis: number | null,
+  sharesOwned: number | null,
+  currentPrice: number,
+  costToCloseNow: number,
+  breachPct: number
+): AssignmentOpportunityCostResult | null {
+  if (breachPct <= SELL_THE_NEWS_MAX_BREACH_PCT) return null;
+
+  const totalPremium = premiumCollected * 100 * contracts;
+  const realizedPLOption = (premiumCollected - costToCloseNow) * 100 * contracts;
+
+  if (positionType === "cash_secured_put") {
+    const effectiveCostBasis = strike - premiumCollected;
+    const hypotheticalFreshBasis = currentPrice;
+    const costBasisDelta = effectiveCostBasis - hypotheticalFreshBasis;
+
+    const deltaWord = costBasisDelta > 0 ? "a higher (worse)" : costBasisDelta < 0 ? "a lower (better)" : "the same";
+    const narrative =
+      `Closing now realizes a ${fmtDollars(Math.abs(realizedPLOption))} ${realizedPLOption >= 0 ? "gain" : "loss"} on the option ` +
+      `and leaves a fresh cost basis of ${fmtDollars(hypotheticalFreshBasis)} if shares were bought at today's price, ` +
+      `versus an effective cost basis of ${fmtDollars(effectiveCostBasis)} if assigned instead -- ` +
+      `${fmtDollars(Math.abs(costBasisDelta))} ${deltaWord} basis than buying fresh.`;
+
+    return {
+      positionType: "cash_secured_put",
+      ifAssigned: { effectiveCostBasis },
+      ifCloseNow: { realizedPL: realizedPLOption, hypotheticalFreshBasis },
+      costBasisDelta,
+      narrative,
+    };
+  }
+
+  if (costBasis == null || sharesOwned == null) return null;
+
+  const realizedGain = coveredCallPL(strike, strike, costBasis, sharesOwned, totalPremium);
+  const sharesRetainedValue = currentPrice * sharesOwned;
+  const upsideForgoneIfAssigned = (currentPrice - strike) * sharesOwned;
+
+  const narrative =
+    `If assigned, proceeds are capped at the ${fmtDollars(strike)} strike for a locked-in realized gain of ${fmtDollars(realizedGain)}. ` +
+    `Closing the call now instead realizes a ${fmtDollars(Math.abs(realizedPLOption))} ${realizedPLOption >= 0 ? "gain" : "loss"} on the option ` +
+    `while keeping the shares (currently worth ${fmtDollars(sharesRetainedValue)}), leaving ${fmtDollars(upsideForgoneIfAssigned)} ` +
+    `of additional upside in play if the price keeps rising past the strike.`;
+
+  return {
+    positionType: "covered_call",
+    ifAssigned: { proceeds: strike, realizedGain },
+    ifCloseNow: { realizedPL: realizedPLOption, sharesRetainedValue },
+    upsideForgoneIfAssigned,
+    narrative,
+  };
 }
 
 // ---------------------------------------------------------------------------

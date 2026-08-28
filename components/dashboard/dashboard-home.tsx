@@ -25,6 +25,8 @@ export function DashboardHome() {
     setRows((prev) => (prev ?? []).filter((r) => r.id !== id));
   }
 
+  const sortedRows = rows != null ? [...rows].sort((a, b) => a.ticker.localeCompare(b.ticker)) : null;
+
   return (
     <div className="flex flex-col gap-6">
       <IvHealthBanner />
@@ -52,9 +54,9 @@ export function DashboardHome() {
         </div>
       )}
 
-      {rows != null && rows.length > 0 && (
+      {sortedRows != null && sortedRows.length > 0 && (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {rows.map((row) => (
+          {sortedRows.map((row) => (
             <WatchlistCard key={row.id} row={row} onRemove={removeRow} />
           ))}
         </div>

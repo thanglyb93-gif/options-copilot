@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import type { CallOrPut } from "yahoo-finance2/modules/options";
 import {
   fetchOptionsChainWithinDays,
+  fetchTargetExpirationChain,
   fetchHistoricalCloses,
   simpleMovingAverage,
   computeThreeMonthRange,
@@ -13,10 +14,12 @@ import {
   findClosestDteIndex,
   assignmentProbabilityLabel,
   impliedVolatilityFromPrice,
+  probabilityOfTouch,
+  spreadQuality,
   type OptionType,
 } from "@/lib/options-math";
 import { assessContractReliability, deltaBandFlag, dteBandFlag, unreliableIvFlag } from "@/lib/flags";
-import { atmImpliedVolatility } from "@/lib/volatility";
+import { atmImpliedVolatility, ivTermStructure, volatilitySkew } from "@/lib/volatility";
 import { expectedMove, strikeCushion, cushionScore } from "@/lib/expected-move";
 import {
   operativeSupportRef,
@@ -26,6 +29,14 @@ import {
 } from "@/lib/structural-levels";
 
 const MAX_DAYS = 60;
+
+// IV term-structure comparison targets a far-month expiration in this
+// DTE band -- a separate, single-expiration fetch (not an expansion of
+// MAX_DAYS above, which would also grow the Strike Selector's available
+// expirations, a UI change nobody asked for here).
+const FAR_TERM_MIN_DTE = 60;
+const FAR_TERM_MAX_DTE = 90;
+const FAR_TERM_TARGET_DTE = 75; // midpoint
 
 function mapContract(
   contract: CallOrPut,
@@ -85,6 +96,12 @@ function mapContract(
     cushionScoreValue = cushionScore(emCushion);
   }
 
+  const touchProbability = delta != null ? probabilityOfTouch(delta) : null;
+  // Only ever computed from a genuinely live two-sided market -- never
+  // from the lastPrice fallback (spreadQuality itself also guards this,
+  // but bid/ask are literally absent/zero in that state anyway).
+  const spread = spreadQuality(contract.bid ?? 0, contract.ask ?? 0);
+
   return {
     contractSymbol: contract.contractSymbol,
     strike: contract.strike,
@@ -101,6 +118,9 @@ function mapContract(
     inTargetBand:
       delta != null && deltaBandFlag(delta) && dteBandFlag(dte),
     assignmentProbability: delta != null ? assignmentProbabilityLabel(delta) : null,
+    probabilityOfTouch: touchProbability != null ? `~${Math.round(touchProbability * 100)}%` : null,
+    spreadPct: spread?.spreadPct ?? null,
+    spreadLabel: spread?.label ?? null,
     emCushion,
     cushionScore: cushionScoreValue,
     structuralConfirmation: operativeRef
@@ -116,9 +136,10 @@ export async function GET(
   const ticker = params.ticker.toUpperCase();
 
   try {
-    const [chain, closes] = await Promise.all([
+    const [chain, closes, farChain] = await Promise.all([
       fetchOptionsChainWithinDays(ticker, MAX_DAYS),
       fetchHistoricalCloses(ticker, 300),
+      fetchTargetExpirationChain(ticker, FAR_TERM_TARGET_DTE).catch(() => null),
     ]);
 
     const sma50 = simpleMovingAverage(closes, 50);
@@ -166,11 +187,43 @@ export async function GET(
           })
         : null;
 
+    // Graceful degradation: only compute a far-month IV (and therefore a
+    // term structure) when the chain actually has an expiration that
+    // truly falls within the 60-90 DTE band -- "closest to 75 DTE" can
+    // otherwise return something well outside that band for a ticker
+    // with a limited/short-dated chain, which would be a misleading
+    // comparison rather than a real term-structure read.
+    const farDte = farChain ? daysToExpiration(farChain.expirationDate) : null;
+    const farInBand = farDte != null && farDte >= FAR_TERM_MIN_DTE && farDte <= FAR_TERM_MAX_DTE;
+    const farMonthAtmIv =
+      farChain && farInBand && chain.underlyingPrice != null
+        ? atmImpliedVolatility({
+            underlyingPrice: chain.underlyingPrice,
+            calls: farChain.calls.filter((c) => !unreliableIvFlag(c)),
+            puts: farChain.puts.filter((p) => !unreliableIvFlag(p)),
+          })
+        : null;
+
+    const termStructure =
+      frontMonthAtmIv != null && farMonthAtmIv != null && farMonthAtmIv > 0
+        ? ivTermStructure(frontMonthAtmIv, farMonthAtmIv)
+        : null;
+
+    // Uses the already-mapped front-month row (expirations[targetIndex]),
+    // not the raw `frontMonth` chain above -- volatilitySkew needs each
+    // contract's computed delta, which only exists after mapContract().
+    const frontMonthMapped = expirations[targetIndex];
+    const skew = frontMonthMapped
+      ? volatilitySkew({ calls: frontMonthMapped.calls, puts: frontMonthMapped.puts })
+      : null;
+
     return NextResponse.json({
       ticker,
       underlyingPrice: chain.underlyingPrice ?? null,
       marketState: chain.marketState ?? null,
       frontMonthAtmIv,
+      termStructure,
+      volatilitySkew: skew,
       defaultExpirationIndex: targetIndex,
       expirations,
       asOf: new Date().toISOString(),

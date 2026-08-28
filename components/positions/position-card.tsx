@@ -4,7 +4,8 @@ import { useState } from "react";
 import type { PositionSummary } from "@/types/api";
 import { formatCurrency, formatDate, formatPercent } from "@/lib/format";
 import { PROFIT_TARGET_CC_PCT, PROFIT_TARGET_CSP_PCT } from "@/lib/position-analytics";
-import { DecayCurveChart } from "./decay-curve-chart";
+import { ProfitHistoryChart } from "./profit-history-chart";
+import { AssignmentOpportunityCostPanel } from "./assignment-opportunity-cost-panel";
 
 export function PositionCard({
   position,
@@ -21,7 +22,13 @@ export function PositionCard({
   const a = position.analytics;
   const isCoveredCall = position.position_type === "covered_call";
   const profitTarget = isCoveredCall ? PROFIT_TARGET_CC_PCT : PROFIT_TARGET_CSP_PCT;
-  const progressPct = a?.profitCapturedPct != null ? Math.max(0, Math.min(100, (a.profitCapturedPct / profitTarget) * 100)) : 0;
+  const closeTargetDollars = a?.maxProfit != null ? a.maxProfit * (profitTarget / 100) : null;
+  // Mathematically bounded at exactly 100% since a real buyback cost can
+  // never be negative -- capped defensively in case of a data glitch, per
+  // Phase 21's explicit edge-case note. The negative side is uncapped and
+  // expected (a position can be meaningfully underwater).
+  const profitCapturedBarPct =
+    a?.profitCapturedPct != null ? Math.max(0, Math.min(100, a.profitCapturedPct)) : 0;
 
   async function runAction(action: "close" | "assign") {
     setActionError(null);
@@ -100,17 +107,11 @@ export function PositionCard({
 
           {a.profitCapturedPct != null && (
             <div className="flex flex-col gap-1">
-              <div className="flex items-baseline justify-between text-xs text-muted">
-                <span>Profit Captured</span>
-                <span className="font-mono text-foreground">
-                  {formatPercent(a.profitCapturedPct, 0)} of {profitTarget}% target
-                </span>
-              </div>
+              <span className="font-mono text-xs text-foreground">
+                Profit Captured: {formatPercent(Math.min(100, a.profitCapturedPct), 0)} of 100% max profit
+              </span>
               <div className="h-2 w-full overflow-hidden rounded-full bg-background">
-                <div
-                  className={`h-full ${a.profitCapturedPct >= profitTarget ? "bg-accent" : "bg-accent/50"}`}
-                  style={{ width: `${progressPct}%` }}
-                />
+                <div className="h-full bg-accent/50" style={{ width: `${profitCapturedBarPct}%` }} />
               </div>
             </div>
           )}
@@ -121,12 +122,19 @@ export function PositionCard({
             </div>
           )}
 
-          <div>
-            <span className="mb-1 block text-[11px] uppercase tracking-wide text-muted">
-              Theta Decay Curve (today marked)
-            </span>
-            <DecayCurveChart curve={a.decayCurve} currentDte={a.dte} />
-          </div>
+          {a.profitHistory && (
+            <div>
+              <span className="mb-1 block text-[11px] uppercase tracking-wide text-muted">
+                Profit History
+              </span>
+              <ProfitHistoryChart
+                history={a.profitHistory}
+                todayMarker={a.todayMarker}
+                maxProfit={a.maxProfit}
+                closeTargetDollars={closeTargetDollars}
+              />
+            </div>
+          )}
 
           {a.itmRiskClassification && (
             <div className="flex flex-col gap-2 rounded-md border-2 border-red-500/50 bg-red-500/10 p-3">
@@ -148,6 +156,10 @@ export function PositionCard({
                 ))}
               </ul>
             </div>
+          )}
+
+          {a.assignmentOpportunityCost && (
+            <AssignmentOpportunityCostPanel result={a.assignmentOpportunityCost} />
           )}
         </>
       )}

@@ -6,6 +6,7 @@ import {
   simpleMovingAverage,
 } from "@/lib/yahoo";
 import { historicalVolatility, hvPercentileRank } from "@/lib/volatility";
+import { calculateRsi } from "@/lib/trend";
 
 export async function GET(
   _request: Request,
@@ -55,6 +56,7 @@ export async function GET(
       sma200: simpleMovingAverage(closes, 200),
       hv30: historicalVolatility(closes, 30),
       hvPercentile: hvPercentileRank(closes, 30).percentile,
+      rsi: calculateRsi(closes),
       asOf: new Date().toISOString(),
     });
   } catch (error) {
