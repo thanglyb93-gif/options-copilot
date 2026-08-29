@@ -452,6 +452,7 @@ export type Suitability = "outperforming" | "inline" | "underperforming";
 
 export interface RelativeStrengthEvaluation {
   ticker: string;
+  window30: RelativeStrengthWindow;
   window90: RelativeStrengthWindow;
   window180: RelativeStrengthWindow;
   structuralTrend: StructuralTrend | null;
@@ -473,7 +474,86 @@ export interface ScreenerResponse {
   /** Null when this ticker has no defined sector group -- broad-market-only comparison, not an error. */
   sectorGroup: ScreenerSectorGroup | null;
   summary: string;
+  /**
+   * Phase 29: same ~25-delta put-vs-call IV read as the ticker page's
+   * Volatility Skew (lib/volatility.ts), computed from the front-month
+   * expiration. Null on a thin chain with no ~25-delta contract on one
+   * side -- same graceful-degradation contract as everywhere else this
+   * is shown.
+   */
+  volatilitySkew: VolatilitySkewResult | null;
   asOf: string;
+}
+
+// ---------------------------------------------------------------------------
+// Simulated historical backtest (Phase 29) -- SIMULATED: real historical
+// prices, but modeled IV/premiums, since no free source provides real
+// historical option prices. Every UI surface for this data must say so.
+// ---------------------------------------------------------------------------
+
+export interface SimulatedEntry {
+  entryDate: string;
+  entryPrice: number;
+  modeledIv: number;
+  strike: number;
+  expirationDate: string;
+  dte: number;
+  premiumPerShare: number;
+  totalPremium: number;
+  finalPrice: number;
+  assigned: boolean;
+  capitalAtRisk: number;
+  realizedPL: number;
+  returnPct: number;
+}
+
+export interface SimulatedBacktestResponse {
+  ticker: string;
+  direction: "put" | "call";
+  lookbackMonths: number;
+  targetDte: number;
+  targetCushion: number;
+  entries: SimulatedEntry[];
+  winRate: number | null;
+  avgReturnPct: number | null;
+  bestEntry: SimulatedEntry | null;
+  worstEntry: SimulatedEntry | null;
+  asOf: string;
+}
+
+// ---------------------------------------------------------------------------
+// Insider activity -- SEC EDGAR Form 4 (Phase 29)
+// ---------------------------------------------------------------------------
+
+export type InsiderTransactionCode = "P" | "S";
+
+export interface InsiderTransaction {
+  insiderName: string;
+  role: string;
+  code: InsiderTransactionCode;
+  shares: number;
+  pricePerShare: number;
+  valueUsd: number;
+  transactionDate: string;
+}
+
+export interface InsiderActivitySummary {
+  ticker: string;
+  windowDays: number;
+  purchaseCount: number;
+  saleCount: number;
+  netValueUsd: number;
+  totalBoughtUsd: number;
+  totalSoldUsd: number;
+  recentTransactions: InsiderTransaction[];
+}
+
+export interface InsiderActivityResponse {
+  ticker: string;
+  /** Null when SEC has no CIK for this ticker (not a US reporting company) -- distinct from real zero-activity. */
+  summary: InsiderActivitySummary | null;
+  generatedAt: string;
+  cached: boolean;
 }
 
 // ---------------------------------------------------------------------------

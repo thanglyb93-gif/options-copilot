@@ -11,6 +11,7 @@
 
 import { IV_PERCENTILE_BANDS } from "./entry-score";
 import { CUSHION_SCORE_BANDS } from "./expected-move";
+import type { VolatilitySkewLean } from "./volatility";
 
 // ---------------------------------------------------------------------------
 // EM Cushion -- reuses CUSHION_SCORE_BANDS (lib/expected-move.ts) exactly.
@@ -80,6 +81,19 @@ export function parseApproxPercent(text: string | null): number | null {
   if (!text) return null;
   const match = text.match(/(-?\d+(\.\d+)?)/);
   return match ? Number(match[1]) : null;
+}
+
+// ---------------------------------------------------------------------------
+// Volatility skew -- reuses lib/volatility.ts's own lean classification
+// (put-skewed/call-skewed/flat), just formatted as the same pill label
+// used everywhere else in Phase 28's labeling work. Shared by the Entry
+// Score card (components/ticker/entry-score-panel.tsx) and the
+// Screener's new Skew stat (Phase 29) so the two surfaces can never
+// show different wording for the same lean.
+// ---------------------------------------------------------------------------
+
+export function skewLeanLabel(lean: VolatilitySkewLean): string {
+  return lean === "put-skewed" ? "Put-Skewed" : lean === "call-skewed" ? "Call-Skewed" : "Flat";
 }
 
 // ---------------------------------------------------------------------------

@@ -9,6 +9,7 @@
 
 import type { BriefingContent, DirectionalLean } from "@/lib/briefing";
 import type { HeadlineCategory, HeadlineLevel } from "@/lib/headline-classification";
+import type { InsiderActivitySummary } from "@/lib/sec-edgar";
 
 export type PositionType = "covered_call" | "cash_secured_put";
 
@@ -85,6 +86,18 @@ export type LeanHistoryRow = {
   outcome: LeanOutcome | null;
 };
 
+/**
+ * Cached aggregated SEC EDGAR Form 4 summary per ticker -- same
+ * upsert-by-ticker cache shape as BriefingRow, just a different content
+ * payload. See lib/insider-service.ts.
+ */
+export type InsiderActivityRow = {
+  id: string;
+  ticker: string;
+  content: InsiderActivitySummary;
+  generated_at: string;
+};
+
 export interface Database {
   public: {
     Tables: {
@@ -155,6 +168,13 @@ export interface Database {
         > &
           Pick<LeanHistoryRow, "ticker" | "date" | "lean" | "price_at_snapshot">;
         Update: Partial<LeanHistoryRow>;
+        Relationships: [];
+      };
+      insider_activity: {
+        Row: InsiderActivityRow;
+        Insert: Partial<Pick<InsiderActivityRow, "id" | "generated_at">> &
+          Pick<InsiderActivityRow, "ticker" | "content">;
+        Update: Partial<InsiderActivityRow>;
         Relationships: [];
       };
     };

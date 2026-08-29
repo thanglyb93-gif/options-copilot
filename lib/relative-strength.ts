@@ -24,6 +24,8 @@ export interface DailyCloseLike {
 // Lookback windows
 // ---------------------------------------------------------------------------
 
+/** Very-short window -- Phase 29: a fast-moving consistency check alongside the existing 90d/180d windows. */
+export const VERY_SHORT_LOOKBACK_DAYS = 30;
 /** Short window -- consistency check against existing short-term signals. */
 export const SHORT_LOOKBACK_DAYS = 90;
 /** Primary window -- matches the "6 months" framing; the UI defaults to this one and suitability is judged on it. */
@@ -209,19 +211,27 @@ export function classifySuitability(
 
 export interface RelativeStrengthEvaluation {
   ticker: string;
+  window30: RelativeStrengthWindow;
   window90: RelativeStrengthWindow;
   window180: RelativeStrengthWindow;
   structuralTrend: StructuralTrend | null;
   suitability: Suitability;
 }
 
-/** Runs both lookback windows plus the structural-trend and suitability reads in one call -- the one function the Screener route actually calls. */
+/** Runs every lookback window plus the structural-trend and suitability reads in one call -- the one function the Screener route actually calls. */
 export function evaluateRelativeStrength(
   ticker: string,
   tickerHistoricals: DailyCloseLike[],
   spyHistoricals: DailyCloseLike[],
   sectorPeerHistoricals: PeerHistoricals[] | null
 ): RelativeStrengthEvaluation {
+  const window30 = computeRelativeStrength(
+    ticker,
+    tickerHistoricals,
+    spyHistoricals,
+    sectorPeerHistoricals,
+    VERY_SHORT_LOOKBACK_DAYS
+  );
   const window90 = computeRelativeStrength(
     ticker,
     tickerHistoricals,
@@ -239,7 +249,7 @@ export function evaluateRelativeStrength(
   const structuralTrend = classifyStructuralTrend(tickerHistoricals);
   const suitability = classifySuitability(window180.vsMarketPct, window180.vsSectorPct, structuralTrend);
 
-  return { ticker, window90, window180, structuralTrend, suitability };
+  return { ticker, window30, window90, window180, structuralTrend, suitability };
 }
 
 // ---------------------------------------------------------------------------

@@ -4,7 +4,7 @@ import type { FetchState } from "@/lib/use-json-fetch";
 import { combineWithStrikeCushion } from "@/lib/entry-score";
 import { formatOrdinal } from "@/lib/format";
 import { guidanceIndicatorById } from "@/lib/guidance-content";
-import { cushionLabel, percentileLabel } from "@/lib/indicator-labels";
+import { cushionLabel, percentileLabel, skewLeanLabel } from "@/lib/indicator-labels";
 import { ImportanceBadge } from "@/components/shared/importance-badge";
 import { IndicatorLabel } from "@/components/shared/indicator-label";
 import type {
@@ -77,10 +77,6 @@ function IvComponentDetail({ iv }: { iv: IvComponentResult }) {
   );
 }
 
-function leanLabel(lean: string): string {
-  return lean === "put-skewed" ? "Put-Skewed" : lean === "call-skewed" ? "Call-Skewed" : "Flat";
-}
-
 function SkewDetail({ skew }: { skew: SkewComponentResult }) {
   if (skew.score == null) return <>{skew.note ?? "—"}</>;
   const pts = skew.skew ? Math.abs(skew.skew.skew * 100).toFixed(1) : "—";
@@ -88,7 +84,7 @@ function SkewDetail({ skew }: { skew: SkewComponentResult }) {
   return (
     <span className="flex items-center justify-end gap-1.5">
       {skew.score.toFixed(1)} ({pts}pt)
-      <IndicatorLabel text={leanLabel(lean)} />
+      <IndicatorLabel text={skewLeanLabel(lean)} />
     </span>
   );
 }

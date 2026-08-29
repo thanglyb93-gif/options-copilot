@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { fetchHistoricalCloses, fetchQuote } from "@/lib/yahoo";
+import type { CallOrPut } from "yahoo-finance2/modules/options";
+import { fetchHistoricalCloses, fetchQuote, fetchTargetExpirationChain, daysToExpiration } from "@/lib/yahoo";
 import { peerTickersFor, sectorGroupForTicker } from "@/lib/sector-groups";
 import {
   describeRelativeStrength,
@@ -7,6 +8,36 @@ import {
   RELATIVE_STRENGTH_FETCH_DAYS,
   type PeerHistoricals,
 } from "@/lib/relative-strength";
+import { effectiveIvAndDelta } from "@/lib/options-math";
+import { volatilitySkew, type SkewChainContract, type VolatilitySkewResult } from "@/lib/volatility";
+
+/**
+ * Front-month chain, delta-mapped just enough for volatilitySkew's input
+ * -- the same effectiveIvAndDelta computation app/api/options/[ticker]
+ * uses per row, scoped here to only what the skew read needs (no theta,
+ * cushion, spread, etc -- this route isn't the Strike Selector).
+ */
+async function fetchSkew(ticker: string): Promise<VolatilitySkewResult | null> {
+  const chain = await fetchTargetExpirationChain(ticker).catch(() => null);
+  if (!chain) return null;
+  const dte = daysToExpiration(chain.expirationDate);
+
+  const mapDelta = (contract: CallOrPut, optionType: "call" | "put"): SkewChainContract => {
+    const { effectiveIv, ivUnreliable, delta } = effectiveIvAndDelta(
+      contract,
+      optionType,
+      chain.underlyingPrice,
+      dte,
+      chain.marketState
+    );
+    return { delta, impliedVolatility: ivUnreliable ? null : effectiveIv };
+  };
+
+  return volatilitySkew({
+    calls: chain.calls.map((c) => mapDelta(c, "call")),
+    puts: chain.puts.map((p) => mapDelta(p, "put")),
+  });
+}
 
 export async function GET(_request: Request, { params }: { params: { ticker: string } }) {
   const ticker = params.ticker.toUpperCase();
@@ -15,7 +46,7 @@ export async function GET(_request: Request, { params }: { params: { ticker: str
     const group = sectorGroupForTicker(ticker);
     const peerTickers = peerTickersFor(ticker);
 
-    const [quote, tickerCloses, spyCloses, peerResults] = await Promise.all([
+    const [quote, tickerCloses, spyCloses, peerResults, volatilitySkewResult] = await Promise.all([
       fetchQuote(ticker),
       fetchHistoricalCloses(ticker, RELATIVE_STRENGTH_FETCH_DAYS),
       fetchHistoricalCloses("SPY", RELATIVE_STRENGTH_FETCH_DAYS),
@@ -32,6 +63,11 @@ export async function GET(_request: Request, { params }: { params: { ticker: str
           }
         })
       ),
+      // Skew is supplementary color on this page (unlike the ticker page,
+      // where it's a scored Entry Score input) -- a chain fetch failure
+      // shouldn't break the whole Screener evaluation, so this degrades
+      // to null rather than propagating.
+      fetchSkew(ticker).catch(() => null),
     ]);
 
     const peerHistoricals = peerResults.filter((p): p is PeerHistoricals => p != null);
@@ -53,6 +89,7 @@ export async function GET(_request: Request, { params }: { params: { ticker: str
       evaluation,
       sectorGroup: group ? { name: group.name, peers: group.peers, benchmarkEtf: group.benchmarkEtf } : null,
       summary,
+      volatilitySkew: volatilitySkewResult,
       asOf: new Date().toISOString(),
     });
   } catch (error) {

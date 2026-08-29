@@ -3,7 +3,32 @@
 import { useState } from "react";
 import type { RelativeStrengthWindow, ScreenerResponse } from "@/types/api";
 import { formatCurrency, formatPercent } from "@/lib/format";
+import { skewLeanLabel } from "@/lib/indicator-labels";
+import { IndicatorLabel } from "@/components/shared/indicator-label";
 import { SuitabilityBadge } from "./suitability-badge";
+import { InsiderActivityPanel } from "./insider-activity-panel";
+import { SimulatedBacktestPanel } from "./simulated-backtest-panel";
+
+function SkewStat({ skew }: { skew: ScreenerResponse["volatilitySkew"] }) {
+  if (!skew) {
+    return (
+      <div className="flex flex-col gap-0.5">
+        <span className="text-[11px] uppercase tracking-wide text-muted">Skew (front-month)</span>
+        <span className="text-sm text-muted">— (thin chain)</span>
+      </div>
+    );
+  }
+  const pts = Math.abs(skew.skew * 100).toFixed(1);
+  return (
+    <div className="flex flex-col gap-0.5">
+      <span className="text-[11px] uppercase tracking-wide text-muted">Skew (front-month)</span>
+      <span className="flex items-center gap-1.5">
+        <span className="font-mono text-sm text-foreground">{pts}pt</span>
+        <IndicatorLabel text={skewLeanLabel(skew.lean)} />
+      </span>
+    </div>
+  );
+}
 
 function StructuralTrendLabel({ trend }: { trend: ScreenerResponse["evaluation"]["structuralTrend"] }) {
   if (trend === "higher-highs-higher-lows") return <>Higher highs, higher lows</>;
@@ -40,8 +65,9 @@ export function ScreenerResultCard({
   added: boolean;
   addError: string | null;
 }) {
-  const [window, setWindow] = useState<"180" | "90">("180");
-  const activeWindow: RelativeStrengthWindow = window === "180" ? data.evaluation.window180 : data.evaluation.window90;
+  const [window, setWindow] = useState<"180" | "90" | "30">("180");
+  const activeWindow: RelativeStrengthWindow =
+    window === "180" ? data.evaluation.window180 : window === "90" ? data.evaluation.window90 : data.evaluation.window30;
 
   return (
     <div className="flex flex-col gap-4 rounded-lg border border-border bg-surface p-4">
@@ -76,7 +102,7 @@ export function ScreenerResultCard({
         <SuitabilityBadge suitability={data.evaluation.suitability} />
 
         <div className="flex gap-1 rounded-md border border-border p-0.5">
-          {(["180", "90"] as const).map((w) => (
+          {(["180", "90", "30"] as const).map((w) => (
             <button
               key={w}
               type="button"
@@ -103,6 +129,7 @@ export function ScreenerResultCard({
             <StructuralTrendLabel trend={data.evaluation.structuralTrend} />
           </span>
         </div>
+        <SkewStat skew={data.volatilitySkew} />
       </div>
 
       {!data.sectorGroup && (
@@ -117,6 +144,9 @@ export function ScreenerResultCard({
         Reflects historical relative performance only -- not a guarantee of future results, and not a substitute
         for your own judgment.
       </p>
+
+      <InsiderActivityPanel ticker={data.ticker} />
+      <SimulatedBacktestPanel ticker={data.ticker} />
     </div>
   );
 }
