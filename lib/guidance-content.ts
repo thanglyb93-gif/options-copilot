@@ -19,6 +19,7 @@ import {
   TIER_BANDS,
 } from "./entry-score";
 import { CUSHION_SCORE_BANDS } from "./expected-move";
+import { cushionLabel, percentileLabel, RISK_PROBABILITY_BANDS, RISK_PROBABILITY_NOTE } from "./indicator-labels";
 import { DELTA_BAND_MAX, DELTA_BAND_MIN, DTE_BAND_MAX, DTE_BAND_MIN } from "./flags";
 import { SPREAD_MODERATE_MAX_PCT, SPREAD_TIGHT_MAX_PCT } from "./options-math";
 import { SKEW_FLAT_THRESHOLD, TERM_STRUCTURE_THRESHOLD_PCT } from "./volatility";
@@ -88,6 +89,16 @@ const cushionBandsText = formatBands(CUSHION_SCORE_BANDS, "EM multiple", (b) => 
 const tierBandsText = formatBands(TIER_BANDS, "total (0-10)", (b) => b.tier);
 const skewBandsText = formatBands(SKEW_SCORE_BANDS, "pts of favorable-direction skew", (b) => `${b.score.toFixed(1)} pts`);
 
+/**
+ * Phase 28 plain-language label bands -- generated from the exact same
+ * band arrays as the score text above (percentileLabel/cushionLabel walk
+ * the identical thresholds), so a label can never drift from the score
+ * it's describing.
+ */
+const percentileLabelBandsText = formatBands(IV_PERCENTILE_BANDS, "percentile", (b) => percentileLabel(b.min));
+const cushionLabelBandsText = formatBands(CUSHION_SCORE_BANDS, "EM multiple", (b) => cushionLabel(b.min));
+const riskProbabilityBandsText = formatBands(RISK_PROBABILITY_BANDS, "%", (b) => b.label);
+
 export const GUIDANCE_INDICATORS: GuidanceIndicator[] = [
   // ---------------------------------------------------------------------
   // Entry-time indicators
@@ -99,9 +110,9 @@ export const GUIDANCE_INDICATORS: GuidanceIndicator[] = [
     importanceTier: "core",
     whatItMeasures:
       "Where the stock's current implied volatility sits relative to its own trailing history -- how \"rich\" options premiums are right now, specifically for this stock, not the market in general.",
-    howCalculated: `Percentile rank of today's at-the-money implied volatility against real daily IV snapshots collected for this ticker since it was added to the watchlist. Needs ${IV_HISTORY_MIN_ROWS} real snapshot days before it's trusted -- before that, HV Percentile drives the score instead (see below), clearly labeled as an approximation. Feeds the IV component of the Entry Score: ${ivBandsText}`,
-    interpretHigh: "Options premiums are unusually rich for this stock right now -- more compensation for the risk of selling a covered call or cash-secured put.",
-    interpretLow: "Premiums are cheap relative to this stock's own history -- selling here collects less for the same risk.",
+    howCalculated: `Percentile rank of today's at-the-money implied volatility against real daily IV snapshots collected for this ticker since it was added to the watchlist. Needs ${IV_HISTORY_MIN_ROWS} real snapshot days before it's trusted -- before that, HV Percentile drives the score instead (see below), clearly labeled as an approximation. Feeds the IV component of the Entry Score: ${ivBandsText} As of Phase 28, the same percentile also drives a plain-language label (Rich/Elevated/Average/Below Average/Low), shown next to the number: ${percentileLabelBandsText}`,
+    interpretHigh: "Options premiums are unusually rich for this stock right now (labeled \"Rich\" or \"Elevated\") -- more compensation for the risk of selling a covered call or cash-secured put.",
+    interpretLow: "Premiums are cheap relative to this stock's own history (labeled \"Below Average\" or \"Low\") -- selling here collects less for the same risk.",
     whereItAppears: "Ticker Overview (Volatility section), Entry Score card (IV Component row), and Dashboard watchlist card (that card's one volatility-percentile slot, once IV Percentile has matured -- HV Percentile fills the same slot before that, see below).",
   },
   {
@@ -111,9 +122,9 @@ export const GUIDANCE_INDICATORS: GuidanceIndicator[] = [
     importanceTier: "core",
     whatItMeasures:
       "Where the stock's realized (historical) 30-day volatility sits relative to its own trailing ~1-year distribution -- a real, independent read on how choppy the stock's actual price action has been, not a stand-in for IV.",
-    howCalculated: `Percentile rank of the current 30-day historical volatility against a rolling series of 30-day HV values, computed purely from daily closes -- available immediately, no waiting period, unlike IV Percentile (which needs ${IV_HISTORY_MIN_ROWS} accumulated calendar days). The rolling series itself needs at least ${HV_FALLBACK_MIN_SAMPLES} samples before it's trusted.`,
-    interpretHigh: "The stock has been unusually choppy or volatile lately relative to its own recent history.",
-    interpretLow: "Recent price action has been unusually calm for this stock.",
+    howCalculated: `Percentile rank of the current 30-day historical volatility against a rolling series of 30-day HV values, computed purely from daily closes -- available immediately, no waiting period, unlike IV Percentile (which needs ${IV_HISTORY_MIN_ROWS} accumulated calendar days). The rolling series itself needs at least ${HV_FALLBACK_MIN_SAMPLES} samples before it's trusted. Labeled with the same Rich/Elevated/Average/Below Average/Low bands as IV Percentile (Phase 28): ${percentileLabelBandsText}`,
+    interpretHigh: "The stock has been unusually choppy or volatile lately relative to its own recent history (labeled \"Rich\" or \"Elevated\").",
+    interpretLow: "Recent price action has been unusually calm for this stock (labeled \"Below Average\" or \"Low\").",
     whereItAppears:
       "Ticker Overview (Volatility section, permanently), Entry Score card (IV Component -- drives the score while IV Percentile is immature, and stays visible alongside it afterward, since a divergence between the two is itself useful signal), and Dashboard watchlist card (fills that card's one volatility-percentile slot -- labeled \"HV:\" there -- until IV Percentile matures, then hands off to it).",
   },
@@ -124,9 +135,9 @@ export const GUIDANCE_INDICATORS: GuidanceIndicator[] = [
     importanceTier: "core",
     whatItMeasures:
       "How far a specific strike sits from the current price, measured in multiples of the stock's expected move to expiration -- the higher the cushion, the more room the stock has to move before that strike is threatened.",
-    howCalculated: `Expected move = price × IV × √(DTE / 365). Cushion = (price − strike) / expected move for a put, (strike − price) / expected move for a call. Banded into the Technical component of the Entry Score: ${cushionBandsText}`,
-    interpretHigh: "A cushion of 2.0x or more means the strike sits well outside the stock's statistically expected range -- safer, typically at the cost of lower premium.",
-    interpretLow: "A cushion near or below 0 means the strike is already at or past the current price relative to the expected move -- meaningfully higher assignment risk.",
+    howCalculated: `Expected move = price × IV × √(DTE / 365). Cushion = (price − strike) / expected move for a put, (strike − price) / expected move for a call. Banded into the Technical component of the Entry Score: ${cushionBandsText} The same bands also drive a plain-language label (Phase 28), shown next to the multiple: ${cushionLabelBandsText}`,
+    interpretHigh: "A cushion of 2.0x or more (labeled \"Very Wide\") means the strike sits well outside the stock's statistically expected range -- safer, typically at the cost of lower premium.",
+    interpretLow: "A cushion near or below 0 (labeled \"Thin\") means the strike is already at or past the current price relative to the expected move -- meaningfully higher assignment risk.",
     whereItAppears: "Strike Selector results panel (EM Cushion stat), Entry Score card (Technical row, once a strike is selected), and the Covered Call vs. Cash-Secured Put comparison panel (EM Cushion + Structural row, one per side) -- same underlying figure in every case, just labeled for whichever context it's shown in.",
   },
   {
@@ -161,10 +172,9 @@ export const GUIDANCE_INDICATORS: GuidanceIndicator[] = [
     importanceTier: "supporting",
     whatItMeasures:
       "A rough estimate of the probability a specific contract expires in-the-money (and the seller gets assigned), read directly off the option's delta.",
-    howCalculated:
-      "|delta| × 100%, rounded -- delta already approximates probability of expiring ITM under Black-Scholes, so this is a display step, not a separate model. Delta itself is computed via Black-Scholes from the contract's strike, DTE, and implied volatility (or a volatility solved from lastPrice when live bid/ask aren't available).",
-    interpretHigh: "A real chance of assignment -- fine if you're comfortable being assigned, less so if the goal is specifically to keep the shares or avoid buying in.",
-    interpretLow: "The contract is more likely to expire worthless -- favorable for a seller collecting premium with lower odds of the underlying event happening.",
+    howCalculated: `|delta| × 100%, rounded -- delta already approximates probability of expiring ITM under Black-Scholes, so this is a display step, not a separate model. Delta itself is computed via Black-Scholes from the contract's strike, DTE, and implied volatility (or a volatility solved from lastPrice when live bid/ask aren't available). As of Phase 28, banded into a risk-level label (new bands, since this indicator has no existing Entry Score threshold): ${riskProbabilityBandsText} ${RISK_PROBABILITY_NOTE}`,
+    interpretHigh: "A real chance of assignment (labeled \"Elevated\" or \"High Risk\") -- fine if you're comfortable being assigned, less so if the goal is specifically to keep the shares or avoid buying in.",
+    interpretLow: "The contract is more likely to expire worthless (labeled \"Conservative\") -- favorable for a seller collecting premium with lower odds of the underlying event happening.",
     whereItAppears: "Strike Selector results panel (Assignment Probability stat card).",
   },
   {
@@ -174,10 +184,9 @@ export const GUIDANCE_INDICATORS: GuidanceIndicator[] = [
     importanceTier: "supporting",
     whatItMeasures:
       "The approximate probability the underlying trades through this strike at any point before expiration -- not just where it lands at expiry, which is what Assignment Probability (delta) already measures. A contract can have low assignment probability at expiration while still carrying a meaningful chance of testing the strike intraday somewhere along the way.",
-    howCalculated:
-      "The standard trader's rule-of-thumb approximation: roughly double the option's delta, i.e. min(2 × |delta|, 1). This is explicitly an approximation, not a true barrier-option calculation, and is capped at 100% since the raw 2x formula can exceed it for high-delta contracts.",
-    interpretHigh: "A real chance the underlying tests this strike before expiration, even if the odds of finishing past it are lower -- relevant if early-close or rolling decisions matter to you, not just the expiration outcome.",
-    interpretLow: "The underlying is unlikely to trade through this strike at any point before expiration, not just unlikely to finish past it.",
+    howCalculated: `The standard trader's rule-of-thumb approximation: roughly double the option's delta, i.e. min(2 × |delta|, 1). This is explicitly an approximation, not a true barrier-option calculation, and is capped at 100% since the raw 2x formula can exceed it for high-delta contracts. Banded into the same risk-level label as Assignment Probability (Phase 28): ${riskProbabilityBandsText} ${RISK_PROBABILITY_NOTE}`,
+    interpretHigh: "A real chance the underlying tests this strike before expiration (labeled \"Elevated\" or \"High Risk\"), even if the odds of finishing past it are lower -- relevant if early-close or rolling decisions matter to you, not just the expiration outcome.",
+    interpretLow: "The underlying is unlikely to trade through this strike at any point before expiration (labeled \"Conservative\"), not just unlikely to finish past it.",
     whereItAppears: "Strike Selector results panel, as a secondary line beneath Assignment Probability.",
   },
   {

@@ -6,7 +6,6 @@ import { useJsonFetch } from "@/lib/use-json-fetch";
 import type {
   EarningsResponse,
   EntryScoreResponse,
-  IvHistoryResponse,
   MaxPainResponse,
   NewsResponse,
   OptionsResponse,
@@ -15,10 +14,10 @@ import type {
 } from "@/types/api";
 import { Section, SkeletonLines, ErrorNote } from "./section";
 import { QuoteHeader } from "./quote-header";
-import { VolatilityPanel } from "./volatility-panel";
 import { MarketReadPanel } from "./market-read-panel";
 import { StrikeSelector, type StrikeSelection } from "./strike-selector";
 import { StrikeDecisionPanel } from "./strike-decision-panel";
+import { EntryTimeIndicators } from "./entry-time-indicators";
 import { ComparisonPanel } from "./comparison-panel";
 import { HeadlineList } from "@/components/headline-list";
 
@@ -28,7 +27,6 @@ export function TickerDashboard({ symbol }: { symbol: string }) {
   const earnings = useJsonFetch<EarningsResponse>(`/api/earnings/${symbol}`);
   const news = useJsonFetch<NewsResponse>(`/api/news/${symbol}`);
   const maxPain = useJsonFetch<MaxPainResponse>(`/api/maxpain/${symbol}`);
-  const ivHistory = useJsonFetch<IvHistoryResponse>(`/api/iv-history/${symbol}`);
   const putScore = useJsonFetch<EntryScoreResponse>(`/api/entry-score/${symbol}?direction=put`);
   const callScore = useJsonFetch<EntryScoreResponse>(`/api/entry-score/${symbol}?direction=call`);
   // Same relative-strength evaluation the Screener shows for this ticker --
@@ -53,14 +51,6 @@ export function TickerDashboard({ symbol }: { symbol: string }) {
         {quote.loading && <SkeletonLines count={3} />}
         {quote.error && <ErrorNote message={quote.error} />}
         {quote.data && <QuoteHeader quote={quote.data} screener={screener} />}
-
-        {(options.loading || ivHistory.loading) && <SkeletonLines count={2} />}
-        {(options.error || ivHistory.error) && (
-          <ErrorNote message={options.error ?? ivHistory.error ?? "Failed to load"} />
-        )}
-        {options.data && quote.data && ivHistory.data && (
-          <VolatilityPanel options={options.data} quote={quote.data} ivHistory={ivHistory.data} />
-        )}
       </Section>
 
       <Section title="Market Read">
@@ -88,6 +78,23 @@ export function TickerDashboard({ symbol }: { symbol: string }) {
             callScore={callScore}
           />
         </div>
+      </Section>
+
+      <Section title="Entry-Time Indicators">
+        {(options.loading || quote.loading) && <SkeletonLines count={4} />}
+        {(options.error || quote.error) && (
+          <ErrorNote message={options.error ?? quote.error ?? "Failed to load"} />
+        )}
+        {options.data && quote.data && (
+          <EntryTimeIndicators
+            putScore={putScore}
+            callScore={callScore}
+            selection={selection}
+            options={options.data}
+            quote={quote.data}
+            maxPain={maxPain.data}
+          />
+        )}
       </Section>
 
       {options.data && (

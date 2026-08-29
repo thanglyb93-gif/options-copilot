@@ -4,7 +4,9 @@ import type { FetchState } from "@/lib/use-json-fetch";
 import { combineWithStrikeCushion } from "@/lib/entry-score";
 import { formatOrdinal } from "@/lib/format";
 import { guidanceIndicatorById } from "@/lib/guidance-content";
+import { cushionLabel, percentileLabel } from "@/lib/indicator-labels";
 import { ImportanceBadge } from "@/components/shared/importance-badge";
+import { IndicatorLabel } from "@/components/shared/indicator-label";
 import type {
   EntryScoreResponse,
   IvComponentResult,
@@ -52,7 +54,7 @@ function IvComponentDetail({ iv }: { iv: IvComponentResult }) {
   const hvText = iv.hvPercentile != null ? `${formatOrdinal(iv.hvPercentile)} pctile` : "—";
 
   return (
-    <div className="flex flex-col items-end gap-0.5">
+    <div className="flex flex-col items-end gap-1">
       <span className="font-mono text-foreground">
         {iv.score != null ? iv.score.toFixed(1) : "—"}
         {iv.score != null && (
@@ -61,18 +63,34 @@ function IvComponentDetail({ iv }: { iv: IvComponentResult }) {
           </span>
         )}
       </span>
-      <span className="text-xs text-muted">
-        IV: {ivText} · HV: {hvText}
-      </span>
+      <div className="flex flex-wrap items-center justify-end gap-1.5 text-xs text-muted">
+        <span className="flex items-center gap-1">
+          IV: {ivText}
+          {iv.percentile != null && <IndicatorLabel text={percentileLabel(iv.percentile)} />}
+        </span>
+        <span className="flex items-center gap-1">
+          HV: {hvText}
+          {iv.hvPercentile != null && <IndicatorLabel text={percentileLabel(iv.hvPercentile)} />}
+        </span>
+      </div>
     </div>
   );
 }
 
-function skewDetail(skew: SkewComponentResult): string {
-  if (skew.score == null) return skew.note ?? "—";
+function leanLabel(lean: string): string {
+  return lean === "put-skewed" ? "Put-Skewed" : lean === "call-skewed" ? "Call-Skewed" : "Flat";
+}
+
+function SkewDetail({ skew }: { skew: SkewComponentResult }) {
+  if (skew.score == null) return <>{skew.note ?? "—"}</>;
   const pts = skew.skew ? Math.abs(skew.skew.skew * 100).toFixed(1) : "—";
   const lean = skew.skew?.lean ?? "flat";
-  return `${skew.score.toFixed(1)} (${lean}, ${pts}pt)`;
+  return (
+    <span className="flex items-center justify-end gap-1.5">
+      {skew.score.toFixed(1)} ({pts}pt)
+      <IndicatorLabel text={leanLabel(lean)} />
+    </span>
+  );
 }
 
 function relativeStrengthDetail(rs: RelativeStrengthComponentResult): string {
@@ -92,16 +110,22 @@ function relativeStrengthDetail(rs: RelativeStrengthComponentResult): string {
   return `${rs.score.toFixed(1)} (${parts.join(", ")})`;
 }
 
-function technicalDetail(matchedSelection: StrikeSelection | null): string {
-  if (!matchedSelection) return "— (select a strike below)";
+function TechnicalDetail({ matchedSelection }: { matchedSelection: StrikeSelection | null }) {
+  if (!matchedSelection) return <>— (select a strike below)</>;
   const { contract, strike } = matchedSelection;
-  if (contract.cushionScore == null) return `— (unavailable for strike ${strike})`;
+  if (contract.cushionScore == null) return <>— (unavailable for strike {strike})</>;
   const emText =
     contract.emCushion != null ? `${contract.emCushion.toFixed(2)}x expected move` : "expected move unavailable";
   const structural = contract.structuralConfirmation?.confirmed
     ? `, ${matchedSelection.direction === "put" ? "below" : "above"} ${contract.structuralConfirmation.referenceLabel}`
     : "";
-  return `${contract.cushionScore.toFixed(1)} (${emText}${structural})`;
+  return (
+    <span className="flex items-center justify-end gap-1.5">
+      {contract.cushionScore.toFixed(1)} ({emText}
+      {structural})
+      {contract.emCushion != null && <IndicatorLabel text={cushionLabel(contract.emCushion)} />}
+    </span>
+  );
 }
 
 function EntryScoreCard({
@@ -176,7 +200,7 @@ function EntryScoreCard({
             />
             <ComponentRow
               label="Technical"
-              detail={technicalDetail(matchedSelection)}
+              detail={<TechnicalDetail matchedSelection={matchedSelection} />}
               indicatorId="technical-em-cushion"
             />
             <ComponentRow
@@ -186,7 +210,7 @@ function EntryScoreCard({
               }, lean: ${data.eventComponent.lean})`}
               indicatorId="events"
             />
-            <ComponentRow label="Skew" detail={skewDetail(data.skewComponent)} indicatorId="volatility-skew" />
+            <ComponentRow label="Skew" detail={<SkewDetail skew={data.skewComponent} />} indicatorId="volatility-skew" />
             <ComponentRow
               label="Relative Strength"
               detail={relativeStrengthDetail(data.relativeStrengthComponent)}

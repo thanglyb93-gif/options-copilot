@@ -20,13 +20,10 @@ import {
   coveredCallHoldingOutcomes,
   coveredCallPL,
 } from "@/lib/options-math";
-import { formatCurrency, formatNumber, formatPercent } from "@/lib/format";
-import { guidanceIndicatorById } from "@/lib/guidance-content";
-import { ImportanceBadge } from "@/components/shared/importance-badge";
+import { formatCurrency, formatPercent } from "@/lib/format";
 import type { FetchState } from "@/lib/use-json-fetch";
 import type { EntryScoreResponse } from "@/types/api";
 import { SubsectionHeader } from "./section";
-import { EntryScorePanel } from "./entry-score-panel";
 import type { StrikeSelection } from "./strike-selector";
 
 /** Standard equity option contract size. No UI control for this -- there's
@@ -55,11 +52,6 @@ export function StrikeDecisionPanel({
   putScore: FetchState<EntryScoreResponse>;
   callScore: FetchState<EntryScoreResponse>;
 }) {
-  const assignmentProbabilityIndicator = guidanceIndicatorById("assignment-probability");
-  const emCushionIndicator = guidanceIndicatorById("technical-em-cushion");
-  const spreadIndicator = guidanceIndicatorById("liquidity-spread-score");
-  const openInterestIndicator = guidanceIndicatorById("open-interest");
-
   // Everything below is derived directly from the top-level Strike
   // Selector's state (selection) and the live quote (currentPrice) --
   // there is no independent local copy of position type, strike,
@@ -114,22 +106,15 @@ export function StrikeDecisionPanel({
   }, [currentPrice, strike, costBasis, shares, totalPremium, positionType]);
 
   if (!selection) {
-    // Strike-specific content (Summary, Assignment Probability/EM
-    // Cushion/Spread/OI, the chart) genuinely needs a valid selected
-    // contract. The Entry Score preview doesn't -- it already renders a
-    // partial (ticker-level) total with a null selection -- so it still
-    // shows here rather than disappearing entirely while no contract is
-    // selected (e.g. the auto-picked default strike having no live
-    // market to price a premium from).
+    // Strike-specific content (Summary, payoff chart) genuinely needs a
+    // valid selected contract. The Core/Supporting/Context indicator
+    // blocks (components/ticker/entry-time-indicators.tsx) render
+    // separately, below, and already handle a null selection gracefully.
     return (
       <div className="flex flex-col gap-5">
         <p className="text-sm text-muted">
           Select a DTE, strike, and direction above to see the full decision breakdown.
         </p>
-        <div className="flex flex-col gap-3">
-          <SubsectionHeader title="Making Decisions" />
-          <EntryScorePanel putScore={putScore} callScore={callScore} selection={null} />
-        </div>
       </div>
     );
   }
@@ -252,71 +237,7 @@ export function StrikeDecisionPanel({
       </div>
 
       <div className="flex flex-col gap-3">
-        <SubsectionHeader title="Making Decisions" />
-
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <div className="flex flex-col gap-0.5 rounded-md border border-border bg-background px-3 py-2">
-            <span className="flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-muted">
-              Assignment Probability
-              {assignmentProbabilityIndicator && (
-                <ImportanceBadge tier={assignmentProbabilityIndicator.importanceTier} />
-              )}
-            </span>
-            <span className="font-mono text-2xl font-semibold text-foreground">
-              {selection.contract.assignmentProbability ?? "—"}
-            </span>
-            {selection.contract.probabilityOfTouch != null && (
-              <span className="text-xs text-muted">Touch: {selection.contract.probabilityOfTouch}</span>
-            )}
-          </div>
-
-          <div className="flex flex-col gap-0.5 rounded-md border border-border bg-background px-3 py-2">
-            <span className="flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-muted">
-              EM Cushion
-              {emCushionIndicator && <ImportanceBadge tier={emCushionIndicator.importanceTier} />}
-            </span>
-            <span className="font-mono text-2xl font-semibold text-foreground">
-              {selection.contract.emCushion != null ? `${selection.contract.emCushion.toFixed(2)}x` : "—"}
-            </span>
-            <span className="text-xs text-muted">
-              score {selection.contract.cushionScore != null ? formatNumber(selection.contract.cushionScore, 1) : "—"}
-              {selection.contract.structuralConfirmation?.confirmed && (
-                <span className="ml-1 text-accent">
-                  ✓ below/above {selection.contract.structuralConfirmation.referenceLabel}
-                </span>
-              )}
-            </span>
-          </div>
-
-          <div className="flex flex-col gap-0.5 rounded-md border border-border bg-background px-3 py-2">
-            <span className="flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-muted">
-              Spread / Liquidity
-              {spreadIndicator && <ImportanceBadge tier={spreadIndicator.importanceTier} />}
-            </span>
-            <span className="font-mono text-2xl font-semibold text-foreground">
-              {selection.contract.spreadPct != null ? `${selection.contract.spreadPct.toFixed(1)}%` : "—"}
-            </span>
-            <span className="text-xs text-muted">
-              {selection.contract.spreadLabel ?? "no live market"}
-              {selection.contract.spreadLabel === "wide" && (
-                <span className="ml-1 text-red-400">⚠ wide</span>
-              )}
-            </span>
-          </div>
-
-          <div className="flex flex-col gap-0.5 rounded-md border border-border bg-background px-3 py-2">
-            <span className="flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-muted">
-              Open Interest
-              {openInterestIndicator && <ImportanceBadge tier={openInterestIndicator.importanceTier} />}
-            </span>
-            <span className="font-mono text-2xl font-semibold text-foreground">
-              {selection.contract.openInterest != null ? selection.contract.openInterest.toLocaleString() : "—"}
-            </span>
-            <span className="text-xs text-muted">contracts</span>
-          </div>
-        </div>
-
-        <EntryScorePanel putScore={putScore} callScore={callScore} selection={selection} />
+        <SubsectionHeader title="Payoff at Expiration" />
 
         {!missingCostBasis && (
           <div className="h-64 w-full">
