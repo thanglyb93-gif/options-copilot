@@ -83,7 +83,7 @@ export function SimulatedBacktestPanel({ ticker }: { ticker: string }) {
               key={d}
               type="button"
               onClick={() => setDirection(d)}
-              className={`rounded px-2.5 py-1 text-xs ${
+              className={`min-h-11 rounded px-2.5 py-1 text-xs lg:min-h-0 ${
                 direction === d ? "bg-accent/15 text-foreground" : "text-muted hover:text-foreground"
               }`}
             >

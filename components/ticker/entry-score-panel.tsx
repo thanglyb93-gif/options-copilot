@@ -229,7 +229,7 @@ export function EntryScorePanel({
   selection: StrikeSelection | null;
 }) {
   return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
       <EntryScoreCard label="Put Score" direction="put" scoreState={putScore} selection={selection} />
       <EntryScoreCard label="Call Score" direction="call" scoreState={callScore} selection={selection} />
     </div>

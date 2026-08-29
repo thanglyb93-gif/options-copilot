@@ -76,7 +76,7 @@ export function WatchlistCard({
           onClick={handleRemove}
           disabled={removing}
           aria-label={`Remove ${row.ticker} from watchlist`}
-          className="shrink-0 rounded px-1.5 py-0.5 text-xs text-muted hover:bg-white/10 hover:text-foreground"
+          className="flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded px-1.5 py-0.5 text-xs text-muted hover:bg-white/10 hover:text-foreground lg:min-h-0 lg:min-w-0"
         >
           ✕
         </button>

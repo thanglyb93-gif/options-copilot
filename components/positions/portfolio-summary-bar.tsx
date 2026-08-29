@@ -28,7 +28,7 @@ export function PortfolioSummaryBar({ summary }: { summary: PortfolioSummary }) 
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
-        className="w-fit text-xs text-muted hover:text-foreground"
+        className="min-h-11 w-fit py-1 text-xs text-muted hover:text-foreground lg:min-h-0 lg:py-0"
       >
         {expanded ? "▾ Hide" : "▸ Show"} per-position breakdown
       </button>

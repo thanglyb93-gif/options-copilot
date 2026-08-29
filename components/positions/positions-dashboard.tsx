@@ -63,7 +63,7 @@ export function PositionsDashboard() {
           <button
             type="button"
             onClick={() => setShowClosed((v) => !v)}
-            className="flex w-fit items-center gap-2 text-sm font-medium text-muted hover:text-foreground"
+            className="flex min-h-11 w-fit items-center gap-2 py-1 text-sm font-medium text-muted hover:text-foreground lg:min-h-0 lg:py-0"
           >
             {showClosed ? "▾" : "▸"} Closed Positions ({closed.length})
           </button>

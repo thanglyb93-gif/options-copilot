@@ -28,7 +28,8 @@ export default function RootLayout({
     <html lang="en" className={`dark ${fontSans.variable} ${fontMono.variable}`}>
       <body className="flex antialiased">
         <Nav />
-        <main className="min-w-0 flex-1 p-8">{children}</main>
+        {/* pb-20 clears the fixed bottom tab bar (h-14) below lg with room to spare; lg+ reverts to the unchanged p-8. */}
+        <main className="min-w-0 flex-1 p-4 pb-20 sm:p-6 sm:pb-20 lg:p-8">{children}</main>
       </body>
     </html>
   );

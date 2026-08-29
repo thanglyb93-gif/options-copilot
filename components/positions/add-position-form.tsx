@@ -143,7 +143,7 @@ export function AddPositionForm({ onAdded }: { onAdded: () => void }) {
       <button
         type="button"
         onClick={() => setExpanded(true)}
-        className="w-fit rounded-md border border-accent/50 bg-accent/10 px-4 py-2 text-sm font-medium text-foreground hover:bg-accent/20"
+        className="min-h-11 w-full rounded-md border border-accent/50 bg-accent/10 px-4 py-2 text-sm font-medium text-foreground hover:bg-accent/20 sm:w-fit lg:min-h-0"
       >
         + Add Position
       </button>
@@ -160,7 +160,7 @@ export function AddPositionForm({ onAdded }: { onAdded: () => void }) {
         <button
           type="button"
           onClick={() => setExpanded(false)}
-          className="text-xs text-muted hover:text-foreground"
+          className="min-h-11 px-2 text-xs text-muted hover:text-foreground lg:min-h-0 lg:px-0"
         >
           Cancel
         </button>
@@ -179,7 +179,7 @@ export function AddPositionForm({ onAdded }: { onAdded: () => void }) {
               key={opt.value}
               type="button"
               onClick={() => setPositionType(opt.value)}
-              className={`rounded px-3 py-1.5 text-sm ${
+              className={`min-h-11 rounded px-3 py-1.5 text-sm lg:min-h-0 ${
                 positionType === opt.value
                   ? "bg-accent/15 text-foreground"
                   : "text-muted hover:text-foreground"
@@ -197,7 +197,7 @@ export function AddPositionForm({ onAdded }: { onAdded: () => void }) {
         {ticker && <span className="text-[11px] text-foreground">Selected: {ticker}</span>}
       </label>
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <label className="flex flex-col gap-1 text-xs text-muted">
           Strike Price
           <input
@@ -205,7 +205,7 @@ export function AddPositionForm({ onAdded }: { onAdded: () => void }) {
             step="0.5"
             value={strike}
             onChange={(e) => setStrike(e.target.value)}
-            className="rounded-md border border-border bg-background px-2 py-1.5 text-sm text-foreground"
+            className="min-h-11 rounded-md border border-border bg-background px-2 py-1.5 text-sm text-foreground lg:min-h-0"
           />
         </label>
 
@@ -215,7 +215,7 @@ export function AddPositionForm({ onAdded }: { onAdded: () => void }) {
             type="date"
             value={expirationDate}
             onChange={(e) => setExpirationDate(e.target.value)}
-            className="rounded-md border border-border bg-background px-2 py-1.5 text-sm text-foreground"
+            className="min-h-11 rounded-md border border-border bg-background px-2 py-1.5 text-sm text-foreground lg:min-h-0"
           />
           {dte != null && <span className="text-[11px] text-foreground">{dte} DTE</span>}
         </label>
@@ -227,7 +227,7 @@ export function AddPositionForm({ onAdded }: { onAdded: () => void }) {
             step="0.01"
             value={premiumPerShare}
             onChange={(e) => setPremiumPerShare(e.target.value)}
-            className="rounded-md border border-border bg-background px-2 py-1.5 text-sm text-foreground"
+            className="min-h-11 rounded-md border border-border bg-background px-2 py-1.5 text-sm text-foreground lg:min-h-0"
           />
           {totalPremium != null && (
             <span className="text-[11px] text-foreground">Total: {formatCurrency(totalPremium)}</span>
@@ -242,13 +242,13 @@ export function AddPositionForm({ onAdded }: { onAdded: () => void }) {
             min="1"
             value={contracts}
             onChange={(e) => setContracts(e.target.value)}
-            className="rounded-md border border-border bg-background px-2 py-1.5 text-sm text-foreground"
+            className="min-h-11 rounded-md border border-border bg-background px-2 py-1.5 text-sm text-foreground lg:min-h-0"
           />
         </label>
       </div>
 
       {positionType === "covered_call" && (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <label className="flex flex-col gap-1 text-xs text-muted">
             Shares Owned
             <input
@@ -259,7 +259,7 @@ export function AddPositionForm({ onAdded }: { onAdded: () => void }) {
                 setSharesOwned(e.target.value);
                 setSharesTouched(true);
               }}
-              className="rounded-md border border-border bg-background px-2 py-1.5 text-sm text-foreground"
+              className="min-h-11 rounded-md border border-border bg-background px-2 py-1.5 text-sm text-foreground lg:min-h-0"
             />
           </label>
 
@@ -274,7 +274,7 @@ export function AddPositionForm({ onAdded }: { onAdded: () => void }) {
                 setCostBasisFromPosition(false);
               }}
               placeholder="e.g. 231.00"
-              className="rounded-md border border-border bg-background px-2 py-1.5 text-sm text-foreground"
+              className="min-h-11 rounded-md border border-border bg-background px-2 py-1.5 text-sm text-foreground lg:min-h-0"
             />
             {costBasisFromPosition && (
               <span className="text-[10px] text-muted">from your tracked position</span>
@@ -289,7 +289,7 @@ export function AddPositionForm({ onAdded }: { onAdded: () => void }) {
           type="datetime-local"
           value={executedAt}
           onChange={(e) => setExecutedAt(e.target.value)}
-          className="w-fit rounded-md border border-border bg-background px-2 py-1.5 text-sm text-foreground"
+          className="min-h-11 w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm text-foreground sm:w-fit lg:min-h-0"
         />
       </label>
 
@@ -298,7 +298,7 @@ export function AddPositionForm({ onAdded }: { onAdded: () => void }) {
       <button
         type="submit"
         disabled={submitting}
-        className="w-fit rounded-md border border-accent bg-accent/10 px-4 py-2 text-sm font-medium text-foreground hover:bg-accent/20 disabled:opacity-50"
+        className="min-h-11 w-full rounded-md border border-accent bg-accent/10 px-4 py-2 text-sm font-medium text-foreground hover:bg-accent/20 disabled:opacity-50 sm:w-fit lg:min-h-0"
       >
         {submitting ? "Logging…" : "Log Position"}
       </button>

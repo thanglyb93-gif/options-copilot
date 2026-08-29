@@ -91,14 +91,14 @@ export function ScreenerResultCard({
           type="button"
           onClick={onAddToWatchlist}
           disabled={adding || added}
-          className="shrink-0 rounded-md border border-border px-3 py-1.5 text-xs text-foreground hover:border-accent/50 disabled:opacity-50"
+          className="min-h-11 shrink-0 rounded-md border border-border px-3 py-1.5 text-xs text-foreground hover:border-accent/50 disabled:opacity-50 lg:min-h-0"
         >
           {added ? "✓ Added to Watchlist" : adding ? "Adding…" : "+ Add to Watchlist"}
         </button>
       </div>
       {addError && <p className="text-xs text-red-400">{addError}</p>}
 
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <SuitabilityBadge suitability={data.evaluation.suitability} />
 
         <div className="flex gap-1 rounded-md border border-border p-0.5">
@@ -107,7 +107,7 @@ export function ScreenerResultCard({
               key={w}
               type="button"
               onClick={() => setWindow(w)}
-              className={`rounded px-2.5 py-1 text-xs ${
+              className={`min-h-11 rounded px-2.5 py-1 text-xs lg:min-h-0 ${
                 window === w ? "bg-accent/15 text-foreground" : "text-muted hover:text-foreground"
               }`}
             >
@@ -117,7 +117,7 @@ export function ScreenerResultCard({
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
         <ComparisonStat label="vs SPY" value={activeWindow.vsMarketPct} />
         <ComparisonStat
           label={data.sectorGroup ? `vs ${data.sectorGroup.name} peers` : "vs Sector"}

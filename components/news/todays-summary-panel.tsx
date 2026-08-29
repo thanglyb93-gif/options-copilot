@@ -33,7 +33,7 @@ export function TodaysSummaryPanel({
           type="button"
           onClick={onRefresh}
           disabled={refreshing || loading}
-          className="ml-auto rounded-md border border-border px-2 py-1 text-xs text-muted hover:text-foreground disabled:opacity-50"
+          className="ml-auto min-h-11 rounded-md border border-border px-2 py-1 text-xs text-muted hover:text-foreground disabled:opacity-50 lg:min-h-0"
         >
           {refreshing ? "Refreshing…" : "Refresh"}
         </button>

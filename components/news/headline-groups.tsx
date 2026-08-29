@@ -83,7 +83,7 @@ function CategoryGroupPanel({ group }: { group: CategoryGroup }) {
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
-        className="flex w-fit items-center gap-2 text-sm font-medium text-muted hover:text-foreground"
+        className="flex min-h-11 w-fit items-center gap-2 py-1 text-sm font-medium text-muted hover:text-foreground lg:min-h-0 lg:py-0"
       >
         {expanded ? "▾" : "▸"} {CATEGORY_LABELS[group.category]} ({group.headlines.length})
       </button>

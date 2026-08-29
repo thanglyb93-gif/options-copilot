@@ -90,7 +90,7 @@ export function AssignmentOpportunityCostPanel({
     <div className="flex flex-col gap-3 rounded-md border border-border bg-background p-3">
       <span className="text-[11px] uppercase tracking-wide text-muted">Assignment Opportunity Cost</span>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         <div className="flex flex-col gap-1 rounded-md border border-border bg-surface px-3 py-2">
           <span className="text-[11px] uppercase tracking-wide text-muted">If assigned</span>
           {result.positionType === "cash_secured_put" ? (
@@ -126,7 +126,7 @@ export function AssignmentOpportunityCostPanel({
 
       <div className="flex flex-col gap-2 border-t border-border pt-3">
         <span className="text-[11px] uppercase tracking-wide text-muted">Capital / Cash Picture</span>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
           {result.positionType === "cash_secured_put" ? (
             <>
               <div className="flex flex-col gap-1 rounded-md border border-border bg-surface px-3 py-2">

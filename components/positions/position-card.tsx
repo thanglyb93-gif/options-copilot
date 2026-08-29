@@ -112,7 +112,7 @@ export function PositionCard({
                 relabeled: cost-basis math should never appear alongside
                 what's displayed as this call's outcome.)
               */}
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
                 <div className="flex flex-col gap-1 rounded-md border border-accent/40 bg-accent/5 px-4 py-3">
                   <span className="text-[11px] uppercase tracking-wide text-muted">
                     If Assigned (price ≥ {formatCurrency(position.strike, 0)} at expiration)
@@ -251,7 +251,7 @@ export function PositionCard({
               type="button"
               onClick={() => setShowCloseForm(true)}
               disabled={closing}
-              className="rounded-md border border-border px-3 py-1.5 text-xs text-foreground hover:border-accent/50 disabled:opacity-50"
+              className="min-h-11 rounded-md border border-border px-3 py-1.5 text-xs text-foreground hover:border-accent/50 disabled:opacity-50 lg:min-h-0"
             >
               Close
             </button>
@@ -259,13 +259,13 @@ export function PositionCard({
               type="button"
               onClick={() => runAction("assign")}
               disabled={closing}
-              className="rounded-md border border-border px-3 py-1.5 text-xs text-foreground hover:border-accent/50 disabled:opacity-50"
+              className="min-h-11 rounded-md border border-border px-3 py-1.5 text-xs text-foreground hover:border-accent/50 disabled:opacity-50 lg:min-h-0"
             >
               Assign
             </button>
           </>
         ) : (
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <label className="flex items-center gap-1 text-xs text-muted">
               Closing premium (per share)
               <input
@@ -273,21 +273,21 @@ export function PositionCard({
                 step="0.01"
                 value={closingPremiumInput}
                 onChange={(e) => setClosingPremiumInput(e.target.value)}
-                className="w-24 rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground"
+                className="min-h-11 w-24 rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground lg:min-h-0"
               />
             </label>
             <button
               type="button"
               onClick={() => runAction("close")}
               disabled={closing || !closingPremiumInput}
-              className="rounded-md border border-accent bg-accent/10 px-3 py-1.5 text-xs text-foreground disabled:opacity-50"
+              className="min-h-11 rounded-md border border-accent bg-accent/10 px-3 py-1.5 text-xs text-foreground disabled:opacity-50 lg:min-h-0"
             >
               Confirm Close
             </button>
             <button
               type="button"
               onClick={() => setShowCloseForm(false)}
-              className="text-xs text-muted hover:text-foreground"
+              className="min-h-11 px-2 text-xs text-muted hover:text-foreground lg:min-h-0 lg:px-0"
             >
               Cancel
             </button>

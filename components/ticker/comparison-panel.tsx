@@ -192,11 +192,11 @@ function CardStat({ label, value, indicatorId }: { label: string; value: string;
   const indicator = indicatorId ? guidanceIndicatorById(indicatorId) : undefined;
   return (
     <div className="flex flex-col gap-0.5 rounded-md border border-border bg-background px-3 py-2">
-      <span className="flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-muted">
+      <span className="flex flex-wrap items-center gap-1.5 text-[11px] uppercase tracking-wide text-muted">
         {label}
         {indicator && <ImportanceBadge tier={indicator.importanceTier} />}
       </span>
-      <span className="font-mono text-lg font-semibold text-foreground">{value}</span>
+      <span className="font-mono text-lg font-semibold text-foreground break-words">{value}</span>
     </div>
   );
 }
@@ -233,7 +233,7 @@ function structuralDetail(side: ComparisonSideResult): string {
 
 function CallCard({ side, score }: { side: ComparisonSideResult; score: { total: number; tier: string } | null }) {
   return (
-    <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4 sm:grid sm:grid-rows-subgrid sm:row-span-8">
+    <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4 lg:grid lg:grid-rows-subgrid lg:row-span-8">
       <div className="flex items-baseline justify-between">
         <span className="font-mono text-base font-semibold text-foreground">
           {side.strike} C · {side.dte}d
@@ -296,7 +296,7 @@ function PutCard({
   score: { total: number; tier: string } | null;
 }) {
   return (
-    <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4 sm:grid sm:grid-rows-subgrid sm:row-span-8">
+    <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4 lg:grid lg:grid-rows-subgrid lg:row-span-8">
       <div className="flex items-baseline justify-between">
         <span className="font-mono text-base font-semibold text-foreground">
           {side.strike} P · {side.dte}d
@@ -496,10 +496,12 @@ export function ComparisonPanel({
             same height, so a wrapping label on one side can no longer
             push everything below it out of alignment with the other
             side (see the comment above CallCard). Subgrid only applies at
-            sm+, where the two cards actually sit side by side; on
-            mobile each card just stacks in normal flex-col flow.
+            lg+ (Phase 30: matches the nav shell's own mobile/tablet vs.
+            desktop split), where the two cards actually sit side by
+            side; below that, each card just stacks in normal flex-col
+            flow, one full-width column at a time.
           */}
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:grid-rows-[repeat(8,auto)]">
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:grid-rows-[repeat(8,auto)]">
             <CallCard side={comparison.data.callSide} score={callEntryScore} />
             <PutCard side={comparison.data.putSide} ninetyDayRange={comparison.data.ninetyDayRange} score={putEntryScore} />
           </div>

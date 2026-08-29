@@ -51,11 +51,11 @@ function StatCard({
   const indicator = indicatorId ? guidanceIndicatorById(indicatorId) : undefined;
   return (
     <div className="flex flex-col gap-1 rounded-md border border-border bg-background px-3 py-2">
-      <span className="flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-muted">
+      <span className="flex flex-wrap items-center gap-1.5 text-[11px] uppercase tracking-wide text-muted">
         {label}
         {indicator && <ImportanceBadge tier={indicator.importanceTier} />}
       </span>
-      <span className="font-mono text-lg font-semibold text-foreground">{value}</span>
+      <span className="font-mono text-lg font-semibold text-foreground break-words">{value}</span>
       {labelBadge}
       {note && <span className="text-[10px] leading-tight text-muted">{note}</span>}
     </div>
