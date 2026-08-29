@@ -218,9 +218,22 @@ function structuralDetail(side: ComparisonSideResult): string {
   return `${em}${structural} (score ${side.cushionScore != null ? side.cushionScore.toFixed(1) : "—"})`;
 }
 
+/**
+ * Row-count/order must stay IDENTICAL between CallCard and PutCard --
+ * both are 8-row `grid-rows-subgrid` children (header, score badge, Row
+ * 1-6) of the shared parent grid in ComparisonPanel below, so React must
+ * always render the same number of direct-child "row" elements, in the
+ * same order, on both sides (even when a slot's content is
+ * conditionally empty, e.g. no score yet) or row N on one side stops
+ * corresponding to row N on the other. The row count (8) is duplicated
+ * as a literal in each card's `row-span-8` and the parent's
+ * `grid-rows-[repeat(8,auto)]` -- Tailwind's class scanner needs
+ * literal utility strings, so it can't be centralized into one constant.
+ */
+
 function CallCard({ side, score }: { side: ComparisonSideResult; score: { total: number; tier: string } | null }) {
   return (
-    <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4">
+    <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4 sm:grid sm:grid-rows-subgrid sm:row-span-8">
       <div className="flex items-baseline justify-between">
         <span className="font-mono text-base font-semibold text-foreground">
           {side.strike} C · {side.dte}d
@@ -228,7 +241,8 @@ function CallCard({ side, score }: { side: ComparisonSideResult; score: { total:
         <span className="text-xs text-muted">exp {side.expirationDate}</span>
       </div>
 
-      {score && <EntryScoreBadge score={score} />}
+      {/* Always rendered (even when score is still null) so this row slot never disappears -- the 8-row comment above CallCard explains why. */}
+      <div>{score && <EntryScoreBadge score={score} />}</div>
 
       {/* Row 1 */}
       <div className="grid grid-cols-2 gap-2">
@@ -282,7 +296,7 @@ function PutCard({
   score: { total: number; tier: string } | null;
 }) {
   return (
-    <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4">
+    <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4 sm:grid sm:grid-rows-subgrid sm:row-span-8">
       <div className="flex items-baseline justify-between">
         <span className="font-mono text-base font-semibold text-foreground">
           {side.strike} P · {side.dte}d
@@ -290,7 +304,8 @@ function PutCard({
         <span className="text-xs text-muted">exp {side.expirationDate}</span>
       </div>
 
-      {score && <EntryScoreBadge score={score} />}
+      {/* Always rendered (even when score is still null) so this row slot never disappears -- the 8-row comment above CallCard explains why. */}
+      <div>{score && <EntryScoreBadge score={score} />}</div>
 
       {/* Row 1 */}
       <div className="grid grid-cols-2 gap-2">
@@ -474,7 +489,17 @@ export function ComparisonPanel({
             <p className="text-sm text-foreground">{directionalEdgeSentence(comparison.data.directionalEdge)}</p>
           </div>
 
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          {/*
+            grid-rows-[repeat(8,auto)] defines the 8 shared row tracks
+            (header, score badge, Row 1-6) that CallCard/PutCard subgrid
+            into below -- this is what forces both sides' row N to the
+            same height, so a wrapping label on one side can no longer
+            push everything below it out of alignment with the other
+            side (see the comment above CallCard). Subgrid only applies at
+            sm+, where the two cards actually sit side by side; on
+            mobile each card just stacks in normal flex-col flow.
+          */}
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:grid-rows-[repeat(8,auto)]">
             <CallCard side={comparison.data.callSide} score={callEntryScore} />
             <PutCard side={comparison.data.putSide} ninetyDayRange={comparison.data.ninetyDayRange} score={putEntryScore} />
           </div>
