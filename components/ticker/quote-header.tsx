@@ -1,13 +1,16 @@
-import type { QuoteResponse, ScreenerResponse } from "@/types/api";
+"use client";
+
+import type { QuoteResponse, ScreenerResponse, BriefingResponse, AnalystAction } from "@/types/api";
 import { describeTrend } from "@/lib/trend";
 import { guidanceIndicatorById } from "@/lib/guidance-content";
 import { ImportanceBadge } from "@/components/shared/importance-badge";
-import type { FetchState } from "@/lib/use-json-fetch";
+import { useJsonFetch, type FetchState } from "@/lib/use-json-fetch";
 import {
   formatCompactNumber,
   formatCurrency,
   formatDate,
   formatPercent,
+  formatRecommendationKey,
 } from "@/lib/format";
 import { SubsectionHeader } from "./section";
 
@@ -16,6 +19,103 @@ function Stat({ label, value }: { label: string; value: string }) {
     <div className="flex flex-col gap-0.5">
       <span className="text-[11px] uppercase tracking-wide text-muted">{label}</span>
       <span className="font-mono text-sm text-foreground">{value}</span>
+    </div>
+  );
+}
+
+/**
+ * Yahoo's aggregated analyst consensus (lib/yahoo.ts's AnalystTargets) --
+ * distinct from, and more reliable than, the news-derived individual
+ * actions below (RecentAnalystActions): this is a real cross-firm
+ * aggregate Yahoo itself computes, not extracted from whatever headlines
+ * happened to be gathered.
+ */
+function AnalystTargetStat({ quote }: { quote: QuoteResponse }) {
+  const { targetMean, targetLow, targetHigh, numberOfAnalysts, recommendationKey } = quote.analystTargets;
+  const indicator = guidanceIndicatorById("analyst-price-target");
+
+  if (targetMean == null) {
+    return (
+      <div className="flex flex-col gap-0.5">
+        <span className="flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-muted">
+          Analyst Target (Yahoo consensus)
+          {indicator && <ImportanceBadge tier={indicator.importanceTier} />}
+        </span>
+        <span className="font-mono text-sm text-foreground">—</span>
+      </div>
+    );
+  }
+
+  const rangeText =
+    targetLow != null && targetHigh != null
+      ? `range ${formatCurrency(targetLow, 0)}-${formatCurrency(targetHigh, 0)}`
+      : null;
+  const countText = numberOfAnalysts != null ? `${numberOfAnalysts} analysts` : null;
+  const recLabel = formatRecommendationKey(recommendationKey);
+
+  return (
+    <div className="flex flex-col gap-0.5">
+      <span className="flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-muted">
+        Analyst Target (Yahoo consensus)
+        {indicator && <ImportanceBadge tier={indicator.importanceTier} />}
+      </span>
+      <span className="font-mono text-sm text-foreground">{formatCurrency(targetMean, 0)}</span>
+      <span className="text-[10px] leading-tight text-muted">
+        {[rangeText, countText].filter(Boolean).join(", ")}
+        {recLabel ? ` — ${recLabel}` : ""}
+      </span>
+    </div>
+  );
+}
+
+function actionVerbPhrase(action: AnalystAction): string {
+  switch (action.action) {
+    case "raised":
+      return "raised";
+    case "lowered":
+      return "lowered";
+    case "maintained":
+      return "maintained";
+    case "initiated":
+      return "initiated coverage,";
+    default:
+      return "took action on";
+  }
+}
+
+/**
+ * Individual named-firm actions extracted from whatever news happened to
+ * be gathered for this ticker's briefing -- necessarily incomplete
+ * (only as good as the headlines available), unlike the Yahoo consensus
+ * above. Only rendered once briefing data has loaded and the array is
+ * non-empty -- no loading/empty-state UI, since this is supplementary
+ * context, not a primary page element worth a skeleton.
+ */
+function RecentAnalystActions({ ticker }: { ticker: string }) {
+  const { data } = useJsonFetch<BriefingResponse>(`/api/briefing/${ticker}`);
+  const actions = data?.content.analystActions ?? [];
+  const indicator = guidanceIndicatorById("analyst-actions");
+
+  if (actions.length === 0) return null;
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <span className="flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-muted">
+        Recent Analyst Actions (from news)
+        {indicator && <ImportanceBadge tier={indicator.importanceTier} />}
+      </span>
+      <ul className="flex flex-col gap-1">
+        {actions.map((a, i) => (
+          <li key={i} className="text-xs leading-relaxed text-foreground">
+            <span className="font-medium">{a.firm}</span> {actionVerbPhrase(a)}
+            {a.priceTarget != null ? ` price target to ${formatCurrency(a.priceTarget, 0)}` : a.action !== "initiated" ? " rating" : ""}
+            {" "}
+            <span className="text-muted">
+              ({a.source}, {formatDate(a.date)})
+            </span>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -74,7 +174,9 @@ export function QuoteHeader({
           />
           <Stat label="Next Ex-Div" value={formatDate(quote.nextExDividendDate)} />
           <Stat label="Beta" value={quote.beta != null ? quote.beta.toFixed(2) : "—"} />
+          <AnalystTargetStat quote={quote} />
         </div>
+        <RecentAnalystActions ticker={quote.ticker} />
       </div>
 
       {(trend || screener.loading || screener.data) && (

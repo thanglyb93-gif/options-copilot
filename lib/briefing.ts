@@ -47,10 +47,31 @@ export interface DirectionalLeanResult {
   rationale: string;
 }
 
+export type AnalystActionType = "raised" | "lowered" | "maintained" | "initiated" | "other";
+
+/**
+ * A single named-firm price-target action (Phase 31), extracted from the
+ * same gathered headlines the bullets are built from -- distinct from
+ * Part A's Yahoo-aggregated consensus target (lib/yahoo.ts's
+ * AnalystTargets): this is individual, news-derived, and only as
+ * complete as what the gathered headlines happened to mention. Only
+ * emitted when a firm name is actually present in a source; priceTarget
+ * is null when the source names the firm/action but doesn't state a
+ * specific dollar figure.
+ */
+export interface AnalystAction {
+  firm: string;
+  action: AnalystActionType;
+  priceTarget: number | null;
+  date: string;
+  source: string;
+}
+
 export interface BriefingContent {
   bullets: BriefingBullet[];
   macro?: string;
   directionalLean: DirectionalLeanResult;
+  analystActions: AnalystAction[];
 }
 
 export const BRIEFING_SYSTEM_PROMPT = `You are a market intelligence analyst producing a condensed briefing for an options trader who is evaluating covered calls and cash-secured puts on one stock. Your only job is to summarize what the provided sources actually say and note the likely relevance to that specific decision.
@@ -67,7 +88,15 @@ You must also synthesize a directional lean for the stock over the coming weeks,
 - "bearish" if it points toward the stock falling
 - "mixed" if the evidence genuinely conflicts (some sources bullish, some bearish, no clear majority)
 - "neutral" if there is no clear signal either way, or the available sources are too thin to support a view
-Give a one-to-two sentence rationale grounded in the same sources as your bullets. Do not force a bullish or bearish call when the evidence is thin or conflicting -- "neutral" or "mixed" with an honest rationale is the correct answer in that case, not a guess.`;
+Give a one-to-two sentence rationale grounded in the same sources as your bullets. Do not force a bullish or bearish call when the evidence is thin or conflicting -- "neutral" or "mixed" with an honest rationale is the correct answer in that case, not a guess.
+
+Finally, extract any SPECIFIC named-firm analyst actions mentioned in the gathered headlines (a firm raising, lowering, maintaining, or initiating coverage with a rating or price target on this stock) into analystActions:
+- Only include an entry when a specific firm name is actually stated in a source (e.g. "Scotiabank", "Citigroup", "Piper Sandler") -- never infer or guess a firm.
+- priceTarget is the specific dollar figure only if one is explicitly stated; use null if the source mentions the firm/action but no specific number.
+- action is "raised" (increased an existing target), "lowered" (decreased one), "maintained" (reiterated an existing rating/target without a stated change), "initiated" (started coverage), or "other" for anything that doesn't cleanly fit those.
+- date is the date of the action if stated, otherwise the source headline's own published date.
+- source is the headline's source name, same as you'd cite in a bullet.
+- If no headline mentions a specific named-firm action, return an empty array -- do not fabricate one to fill the field.`;
 
 export function formatHeadlines(headlines: BriefingHeadline[]): string {
   if (headlines.length === 0) return "(none available)";
@@ -153,8 +182,29 @@ const BRIEFING_INPUT_SCHEMA: Anthropic.Tool.InputSchema = {
       },
       required: ["lean", "rationale"],
     },
+    analystActions: {
+      type: "array",
+      description: "Named-firm analyst actions found in the gathered headlines. Empty array if none.",
+      items: {
+        type: "object",
+        properties: {
+          firm: { type: "string", description: "The analyst firm's name, exactly as stated in the source." },
+          action: {
+            type: "string",
+            enum: ["raised", "lowered", "maintained", "initiated", "other"],
+          },
+          priceTarget: {
+            type: ["number", "null"],
+            description: "The specific dollar price target, or null if the source didn't state one.",
+          },
+          date: { type: "string", description: "Date of the action, or the source headline's published date." },
+          source: { type: "string", description: "The headline's source name (e.g. 'Benzinga', 'Reuters')." },
+        },
+        required: ["firm", "action", "priceTarget", "date", "source"],
+      },
+    },
   },
-  required: ["bullets", "directionalLean"],
+  required: ["bullets", "directionalLean", "analystActions"],
 };
 
 function isBullet(value: unknown): value is BriefingBullet {
@@ -174,6 +224,27 @@ function isDirectionalLean(value: unknown): value is DirectionalLeanResult {
     typeof v.lean === "string" &&
     (VALID_LEANS as readonly string[]).includes(v.lean) &&
     typeof v.rationale === "string"
+  );
+}
+
+const VALID_ANALYST_ACTIONS: readonly AnalystActionType[] = [
+  "raised",
+  "lowered",
+  "maintained",
+  "initiated",
+  "other",
+];
+
+function isAnalystAction(value: unknown): value is AnalystAction {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v.firm === "string" &&
+    typeof v.action === "string" &&
+    (VALID_ANALYST_ACTIONS as readonly string[]).includes(v.action) &&
+    (v.priceTarget === null || typeof v.priceTarget === "number") &&
+    typeof v.date === "string" &&
+    typeof v.source === "string"
   );
 }
 
@@ -198,11 +269,23 @@ export function parseBriefingContent(value: unknown): BriefingContent {
   if (!isDirectionalLean(v.directionalLean)) {
     throw new Error("Briefing response had a malformed directionalLean field.");
   }
+  // Optional, not required: only the per-ticker briefing schema
+  // (BRIEFING_INPUT_SCHEMA) asks Claude for this -- lib/todays-summary.ts's
+  // market-wide summary reuses this same parser but has no per-ticker
+  // firm actions to extract, so an absent field means "not applicable"
+  // (empty array), not malformed data. A row missing the field entirely
+  // predates Phase 31 for the same reason -- also treated as empty
+  // rather than forcing every existing cached briefing to regenerate.
+  // If the field IS present, it must still be well-formed.
+  if (v.analystActions != null && (!Array.isArray(v.analystActions) || !v.analystActions.every(isAnalystAction))) {
+    throw new Error("Briefing response had a malformed analystActions array.");
+  }
 
   return {
     bullets: v.bullets,
     macro: typeof v.macro === "string" && v.macro.trim() ? v.macro : undefined,
     directionalLean: v.directionalLean,
+    analystActions: Array.isArray(v.analystActions) ? v.analystActions : [],
   };
 }
 

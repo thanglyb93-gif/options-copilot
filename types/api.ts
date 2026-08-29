@@ -305,10 +305,22 @@ export interface DirectionalLeanResult {
   rationale: string;
 }
 
+export type AnalystActionType = "raised" | "lowered" | "maintained" | "initiated" | "other";
+
+/** Named-firm price-target action extracted from news, distinct from QuoteResponse.analystTargets' Yahoo-aggregated consensus. */
+export interface AnalystAction {
+  firm: string;
+  action: AnalystActionType;
+  priceTarget: number | null;
+  date: string;
+  source: string;
+}
+
 export interface BriefingContent {
   bullets: BriefingBullet[];
   macro?: string;
   directionalLean: DirectionalLeanResult;
+  analystActions: AnalystAction[];
 }
 
 export interface BriefingResponse {

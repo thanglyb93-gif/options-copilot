@@ -240,6 +240,32 @@ export const GUIDANCE_INDICATORS: GuidanceIndicator[] = [
     whereItAppears: "Dashboard watchlist card (Max Pain stat) and Strike Selector results panel (\"Max pain for this expiration\" line, nearest expiration only).",
   },
   {
+    id: "analyst-price-target",
+    name: "Analyst Target (Consensus)",
+    category: "entry",
+    importanceTier: "context",
+    whatItMeasures:
+      "Where Wall Street analysts, in aggregate, expect the stock to trade -- a real cross-firm consensus Yahoo itself computes and publishes, not something this app derives or extracts. A general read on longer-term sentiment, not a covered-call/cash-secured-put-specific signal.",
+    howCalculated:
+      "Reported directly from Yahoo's aggregated analyst data (mean, low, and high price target across covering firms, analyst count, and an overall recommendation bucket) -- no calculation, just surfaced data. Reliable and always available for any actively-covered ticker, unlike the news-derived individual actions below, which only capture whatever happened to appear in gathered headlines.",
+    interpretHigh: "Consensus target well above the current price -- analysts as a group see meaningful upside; read alongside the recommendation label (e.g. \"Buy\" vs. \"Hold\"), not the number alone.",
+    interpretLow: "Consensus target at or below the current price, or a cautious recommendation label -- analysts as a group aren't pricing in much further upside from here.",
+    whereItAppears: "Ticker Overview (Fundamentals row, \"Analyst Target\" stat).",
+  },
+  {
+    id: "analyst-actions",
+    name: "Recent Analyst Actions",
+    category: "entry",
+    importanceTier: "context",
+    whatItMeasures:
+      "Specific named-firm rating or price-target actions (e.g. \"Scotiabank raised its target to $130\") mentioned in the same news headlines the Market Read briefing already gathers -- individual, citable color alongside the Yahoo consensus above, not a replacement for it.",
+    howCalculated:
+      "Extracted by the same Claude call that produces the Market Read briefing (lib/briefing.ts), following the identical \"only state what a source actually says\" discipline as the briefing's bullets -- a firm name and (when stated) a specific dollar target must genuinely appear in a gathered headline, or no entry is produced. Necessarily incomplete: this list only reflects whatever analyst commentary happened to be in the news gathered for this ticker recently, unlike the Yahoo consensus above, which is a real, complete cross-firm aggregate. Shown only when the list is non-empty.",
+    interpretHigh: "Multiple recent firms raising targets or initiating coverage favorably -- corroborating, recent, citable color; check the source and date before weighting it heavily, since this is not a complete record of all analyst activity.",
+    interpretLow: "Firms lowering targets or absent entirely -- absence here means no such action appeared in gathered news, not necessarily that none occurred.",
+    whereItAppears: "Ticker Overview (Fundamentals row, below the Analyst Target consensus line).",
+  },
+  {
     id: "iv-term-structure",
     name: "IV Term Structure",
     category: "entry",

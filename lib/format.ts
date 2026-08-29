@@ -67,3 +67,17 @@ export function formatRelativeTime(iso: string): string {
   const diffDays = Math.round(diffHours / 24);
   return `${diffDays}d ago`;
 }
+
+/**
+ * Yahoo's analyst recommendationKey is a snake_case bucket
+ * ("strong_buy", "buy", "hold", "underperform", "sell", or occasionally
+ * "none"/absent) -- this is purely a display formatter, not a new
+ * classification, so it just title-cases whatever Yahoo already sent.
+ */
+export function formatRecommendationKey(key: string | null | undefined): string | null {
+  if (!key || key === "none") return null;
+  return key
+    .split("_")
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+}
