@@ -498,6 +498,38 @@ export interface ScreenerResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Event Timeline (Phase 32) -- retrieval/display of past price moves and
+// what coincided with them. Never predictive; see lib/event-timeline.ts.
+// ---------------------------------------------------------------------------
+
+export type EventTimelineWindow = "1w" | "1mo" | "3mo" | "1yr" | "3yr";
+export type EventAnnotationType = "earnings" | "large-move" | "macro";
+
+export interface EventAnnotation {
+  ticker: string;
+  date: string;
+  type: EventAnnotationType;
+  pctChange: number | null;
+  headline: string | null;
+  source: string | null;
+  classification: string | null;
+}
+
+export interface EventTimelineSeriesPoint {
+  date: string;
+  close: number;
+}
+
+export interface EventTimelineResponse {
+  ticker: string;
+  window: EventTimelineWindow;
+  includeMacro: boolean;
+  series: EventTimelineSeriesPoint[];
+  annotations: EventAnnotation[];
+  asOf: string;
+}
+
+// ---------------------------------------------------------------------------
 // Simulated historical backtest (Phase 29) -- SIMULATED: real historical
 // prices, but modeled IV/premiums, since no free source provides real
 // historical option prices. Every UI surface for this data must say so.

@@ -98,6 +98,24 @@ export type InsiderActivityRow = {
   generated_at: string;
 };
 
+export type EventAnnotationType = "earnings" | "large-move" | "macro";
+
+/**
+ * Permanent, no-TTL cache (see supabase/migrations/0007): a past event's
+ * facts never change, so once a ticker+date+type row exists it's never
+ * re-fetched or re-classified. See lib/event-timeline.ts.
+ */
+export type EventAnnotationRow = {
+  id: string;
+  ticker: string;
+  date: string;
+  type: EventAnnotationType;
+  pct_change: number | null;
+  headline: string | null;
+  source: string | null;
+  classification: string | null;
+};
+
 export interface Database {
   public: {
     Tables: {
@@ -175,6 +193,13 @@ export interface Database {
         Insert: Partial<Pick<InsiderActivityRow, "id" | "generated_at">> &
           Pick<InsiderActivityRow, "ticker" | "content">;
         Update: Partial<InsiderActivityRow>;
+        Relationships: [];
+      };
+      event_annotations: {
+        Row: EventAnnotationRow;
+        Insert: Partial<Pick<EventAnnotationRow, "id" | "pct_change" | "headline" | "source" | "classification">> &
+          Pick<EventAnnotationRow, "ticker" | "date" | "type">;
+        Update: Partial<EventAnnotationRow>;
         Relationships: [];
       };
     };

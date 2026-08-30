@@ -15,6 +15,7 @@ import type {
 import { Section, SkeletonLines, ErrorNote } from "./section";
 import { QuoteHeader } from "./quote-header";
 import { MarketReadPanel } from "./market-read-panel";
+import { EventTimelinePanel } from "./event-timeline-panel";
 import { StrikeSelector, type StrikeSelection } from "./strike-selector";
 import { StrikeDecisionPanel } from "./strike-decision-panel";
 import { EntryTimeIndicators } from "./entry-time-indicators";
@@ -55,6 +56,10 @@ export function TickerDashboard({ symbol }: { symbol: string }) {
 
       <Section title="Market Read">
         <MarketReadPanel symbol={symbol} earningsState={earnings} />
+      </Section>
+
+      <Section title="Event Timeline">
+        <EventTimelinePanel ticker={symbol} />
       </Section>
 
       <Section title="Strike Selector">
