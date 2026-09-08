@@ -3,6 +3,7 @@ import { ENTRY_FLOW_STAGES, EXIT_FLOW_STAGES, DELTA_BAND_TEXT, DTE_BAND_TEXT } f
 import { IndicatorGlossary } from "./indicator-glossary";
 import { FlowDiagram } from "./flow-diagram";
 import { LeanAccuracySummary } from "./lean-accuracy-summary";
+import { CounterfactualBacktestSummary } from "./counterfactual-backtest-summary";
 
 export function GuidanceDashboard() {
   return (
@@ -97,6 +98,15 @@ export function GuidanceDashboard() {
           days later, tracked automatically each time a briefing regenerates.
         </p>
         <LeanAccuracySummary />
+      </Section>
+
+      <Section title="Personalized Counterfactual Backtest">
+        <p className="mb-2 text-xs text-muted">
+          For your own imported losing covered-call trades: what Phase 34&rsquo;s momentum-adjusted
+          cushion buffer would have suggested at that real historical entry, and what that would
+          actually have changed.
+        </p>
+        <CounterfactualBacktestSummary />
       </Section>
     </div>
   );

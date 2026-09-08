@@ -123,6 +123,67 @@ export function hvPercentileRank(closes: CloseLike[], window = 30): HvPercentile
   return { percentile, currentHv, sampleCount: series.length };
 }
 
+// ---------------------------------------------------------------------------
+// Realized volatility trend (Phase 33 Part C) -- has the stock's own
+// short-term choppiness settled down, or is it still expanding? Purely
+// descriptive: never a directional call.
+// ---------------------------------------------------------------------------
+
+export type VolTrend = "expanding" | "contracting" | "stable" | null;
+
+/** Window (trading days) for the short-term realized-vol reading. */
+const REALIZED_VOL_SHORT_WINDOW = 5;
+
+/**
+ * Minimum relative % change (today vs. 10 trading days ago) to call the
+ * trend expanding/contracting rather than stable -- a trivial monotonic
+ * drift shouldn't read as a meaningful move. Adjustable.
+ */
+export const VOL_TREND_MEANINGFUL_CHANGE_PCT = 15;
+
+export interface RealizedVolTrendResult {
+  trend: VolTrend;
+  today: number | null;
+  fiveDaysAgo: number | null;
+  tenDaysAgo: number | null;
+}
+
+/**
+ * Classifies the short-term (5-day annualized) realized-volatility trend
+ * by comparing today's reading against the same 5-day window computed 5
+ * and 10 trading days ago. "expanding"/"contracting" require BOTH a
+ * monotonic run (each successive reading higher/lower) AND an overall
+ * today-vs-10-days-ago change of at least VOL_TREND_MEANINGFUL_CHANGE_PCT.
+ * `trend` is null (not a fabricated "stable") when there isn't enough
+ * daily-close history for all three readings.
+ */
+export function realizedVolTrend(closes: CloseLike[]): RealizedVolTrendResult {
+  const today = historicalVolatility(closes, REALIZED_VOL_SHORT_WINDOW);
+  const fiveDaysAgo =
+    closes.length > 5 ? historicalVolatility(closes.slice(0, closes.length - 5), REALIZED_VOL_SHORT_WINDOW) : null;
+  const tenDaysAgo =
+    closes.length > 10 ? historicalVolatility(closes.slice(0, closes.length - 10), REALIZED_VOL_SHORT_WINDOW) : null;
+
+  if (today == null || fiveDaysAgo == null || tenDaysAgo == null) {
+    return { trend: null, today, fiveDaysAgo, tenDaysAgo };
+  }
+
+  const monotonicUp = today > fiveDaysAgo && fiveDaysAgo > tenDaysAgo;
+  const monotonicDown = today < fiveDaysAgo && fiveDaysAgo < tenDaysAgo;
+  const overallChangePct = tenDaysAgo > 0 ? ((today - tenDaysAgo) / tenDaysAgo) * 100 : 0;
+
+  let trend: VolTrend;
+  if (monotonicUp && overallChangePct >= VOL_TREND_MEANINGFUL_CHANGE_PCT) {
+    trend = "expanding";
+  } else if (monotonicDown && overallChangePct <= -VOL_TREND_MEANINGFUL_CHANGE_PCT) {
+    trend = "contracting";
+  } else {
+    trend = "stable";
+  }
+
+  return { trend, today, fiveDaysAgo, tenDaysAgo };
+}
+
 export type IvTermStructureClassification = "backwardation" | "contango" | "flat";
 
 export interface IvTermStructureResult {

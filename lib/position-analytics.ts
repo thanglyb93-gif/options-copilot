@@ -38,6 +38,27 @@ export const REAL_BREAKDOWN_MIN_BREACH_PCT = 10;
 /** Share of the last ~10 sessions that must move in the adverse direction to count as "sustained." */
 export const SUSTAINED_MOVE_RATIO = 0.6;
 
+/**
+ * How close to (but not yet past) the strike counts as "approaching
+ * breach" for the Roll Calculator (Phase 35) -- a negative % (OTM) as
+ * wide as this still surfaces the roll option preemptively, not just
+ * once a position is already ITM. Same breachPct formula/sign
+ * convention as itmRiskClassification below: positive once genuinely
+ * ITM, negative while OTM. Adjustable default.
+ */
+export const APPROACHING_BREACH_PCT = -5;
+
+/**
+ * % by which a position is ITM (positive) or OTM (negative), relative to
+ * the strike -- the one place this formula lives; itmRiskClassification
+ * and the Roll Calculator's "approaching breach" eligibility check both
+ * call this rather than each computing it themselves.
+ */
+export function computeBreachPct(strike: number, currentPrice: number, direction: TradeDirection): number {
+  const breach = direction === "put" ? (strike - currentPrice) / strike : (currentPrice - strike) / strike;
+  return breach * 100;
+}
+
 // ---------------------------------------------------------------------------
 // 1. Current contract lookup -- respects Phase 7's market-hours fallback
 // ---------------------------------------------------------------------------
@@ -376,9 +397,7 @@ export function itmRiskClassification(
   earningsCooldownFlagged: boolean,
   direction: TradeDirection
 ): ItmRiskClassificationResult {
-  const breach =
-    direction === "put" ? (strike - currentPrice) / strike : (currentPrice - strike) / strike;
-  const breachPct = breach * 100;
+  const breachPct = computeBreachPct(strike, currentPrice, direction);
 
   const adverseDirection = direction === "put" ? "down" : "up";
   const adverseVerb = adverseDirection === "down" ? "decline" : "rally";

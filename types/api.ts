@@ -39,6 +39,18 @@ export interface StructuralConfirmation {
   referenceLabel: string;
 }
 
+/**
+ * Phase 34 -- present only when the momentum-adjusted cushion buffer is
+ * actually active for this contract (calls only, and only when the
+ * underlying is outperforming with a healthy uptrend structure). Null
+ * means no adjustment applied, same null-means-inactive convention as
+ * StructuralConfirmation.
+ */
+export interface MomentumAdjustment {
+  multiplier: number;
+  reason: string;
+}
+
 export interface ContractRow {
   contractSymbol: string;
   strike: number;
@@ -63,6 +75,7 @@ export interface ContractRow {
   emCushion: number | null;
   cushionScore: number | null;
   structuralConfirmation: StructuralConfirmation | null;
+  momentumAdjustment: MomentumAdjustment | null;
 }
 
 export interface ExpirationChain {
@@ -233,6 +246,175 @@ export interface PositionAnalytics {
   assignmentOpportunityCost: AssignmentOpportunityCostResult | null;
   /** Only populated alongside assignmentOpportunityCost -- best-effort, null if the underlying trend/lean data couldn't be gathered. */
   scenarioAlignment: ScenarioAlignmentResult | null;
+  /** Phase 35 -- % ITM (positive) or OTM (negative) vs. the strike. Null only when currentUnderlyingPrice is unavailable. */
+  breachPct: number | null;
+  /** Phase 35 -- true when ITM or within the "approaching breach" distance; gates whether the Roll Calculator section is shown. */
+  rollEligible: boolean;
+  /** Phase 36 -- only populated for a covered-call position; null for a cash-secured put (not stock-backed). */
+  efficiency: PositionEfficiencyResult | null;
+}
+
+// ---------------------------------------------------------------------------
+// Position Efficiency (Phase 36) -- realized annualized covered-call
+// premium yield for a stock-backed holding vs. the portfolio's own
+// average. See lib/position-efficiency.ts, including its KNOWN
+// LIMITATION doc comment (can only see history actually logged in this
+// app). A plain comparison, never a directive to sell.
+// ---------------------------------------------------------------------------
+
+export interface PositionEfficiencyResult {
+  ticker: string;
+  tickerYieldPct: number | null;
+  portfolioAverageYieldPct: number | null;
+  portfolioTickerCount: number;
+  sampleSizeInsufficient: boolean;
+  flagged: boolean;
+  daysTracked: number;
+  totalPremiumCollected: number;
+  capitalCommitted: number | null;
+}
+
+// ---------------------------------------------------------------------------
+// CSV trade-history import (Phase 37) -- see lib/csv-import.ts. `committed:
+// false` is a dry-run preview only (nothing written); `committed: true`
+// reflects what was actually just bulk-inserted.
+// ---------------------------------------------------------------------------
+
+export interface CsvImportSkippedRow {
+  rowNumber: number;
+  raw: string[];
+  reason: string;
+}
+
+export interface CsvImportUnmatchedRow {
+  rowNumber: number;
+  description: string;
+  transCode: string;
+  activityDate: string;
+  unmatchedQuantity: number;
+}
+
+export interface CsvImportCandidateSummary {
+  ticker: string;
+  positionType: "covered_call" | "cash_secured_put";
+  strike: number;
+  expirationDate: string;
+  openedAt: string;
+  closedAt: string;
+  status: "closed" | "assigned" | "expired";
+  premiumCollected: number;
+  closingPremium: number | null;
+  realizedPl: number;
+  contracts: number;
+}
+
+// ---------------------------------------------------------------------------
+// Personalized Counterfactual Backtest (Phase 38) -- see lib/
+// counterfactual-backtest.ts. A retrospective "what if" replaying this
+// app's own current methodology (Phase 34's momentum-adjusted cushion
+// buffer) against real historical prices for a user's own past LOSING
+// covered-call trades -- not a guarantee the alternative would have
+// been strictly better; premiumForgone is always returned alongside
+// avoidedLoss.
+// ---------------------------------------------------------------------------
+
+export interface CounterfactualLegOutcome {
+  strike: number;
+  emCushionTarget: number;
+  premiumPerShare: number;
+  totalPremium: number;
+  finalPrice: number;
+  assigned: boolean;
+  realizedPL: number;
+}
+
+export interface CounterfactualComparison {
+  positionId: string;
+  ticker: string;
+  entryDate: string;
+  expirationDate: string;
+  dte: number;
+  entryPrice: number;
+  modeledIv: number;
+  momentumMultiplier: number;
+  momentumActive: boolean;
+  momentumReason: string | null;
+  actual: {
+    strike: number;
+    premiumPerShare: number;
+    totalPremium: number;
+    realizedPL: number;
+  };
+  counterfactual: CounterfactualLegOutcome;
+  avoidedLoss: number;
+  premiumForgone: number;
+}
+
+export interface CounterfactualSkippedPosition {
+  positionId: string;
+  ticker: string;
+  reason: string;
+}
+
+export interface CounterfactualBacktestResponse {
+  comparisons: CounterfactualComparison[];
+  skipped: CounterfactualSkippedPosition[];
+  asOf: string;
+}
+
+export interface CsvImportResponse {
+  totalRowsParsed: number;
+  skippedRows: CsvImportSkippedRow[];
+  roundTripsMatched: number;
+  unmatchedOpens: CsvImportUnmatchedRow[];
+  unmatchedCloses: CsvImportUnmatchedRow[];
+  candidatesTotal: number;
+  duplicatesSkipped: number;
+  duplicates: CsvImportCandidateSummary[];
+  /** In both preview and commit responses: the rows that either would be, or just were, inserted. */
+  toInsert: CsvImportCandidateSummary[];
+  committed: boolean;
+  insertedCount: number;
+}
+
+// ---------------------------------------------------------------------------
+// Roll Calculator (Phase 35) -- what rolling an open position up/out
+// actually costs/pays, and how much more room the new strike buys. See
+// lib/roll-calculator.ts. A third option shown alongside the existing
+// Hold/Close recommendation and Assignment Opportunity Cost panel, never
+// a verdict of its own.
+// ---------------------------------------------------------------------------
+
+export interface RollNewPositionMetrics {
+  strike: number;
+  expirationDate: string;
+  dte: number;
+  premium: number | null;
+  emCushion: number | null;
+  cushionScore: number | null;
+  structuralConfirmation: StructuralConfirmation | null;
+  assignmentProbability: string | null;
+  ivUnreliable: boolean;
+  usingLastPriceFallback: boolean;
+}
+
+export interface RollPreviewResponse {
+  positionId: string;
+  ticker: string;
+  positionType: "covered_call" | "cash_secured_put";
+  underlyingPrice: number;
+  currentStrike: number;
+  currentExpirationDate: string;
+  newStrike: number;
+  newExpiration: string;
+  costToCloseCurrent: number | null;
+  currentContractUnreliable: boolean;
+  currentUsingLastPriceFallback: boolean;
+  creditFromNewContract: number | null;
+  netRollCreditOrDebit: number | null;
+  realizedLossOnCurrentLeg: number | null;
+  newPositionMetrics: RollNewPositionMetrics | null;
+  asOf: string;
 }
 
 export interface PortfolioDeltaContribution {
@@ -403,6 +585,18 @@ export interface RelativeStrengthComponentResult {
   note?: string;
 }
 
+// ---------------------------------------------------------------------------
+// Timing Caution (Phase 33) -- a parallel, informational signal attached
+// to the score display, never subtracted from or folded into the Entry
+// Score's own math. Answers "has this settled down yet," never "what
+// will happen." See lib/timing-caution.ts.
+// ---------------------------------------------------------------------------
+
+export interface TimingCautionResult {
+  active: boolean;
+  reasoning: string[];
+}
+
 /**
  * Ticker-level entry score only (IV Percentile + Events + Skew +
  * Relative Strength, 0-8 partial). The remaining 0-2 comes from a
@@ -417,6 +611,7 @@ export interface EntryScoreResponse {
   skewComponent: SkewComponentResult;
   relativeStrengthComponent: RelativeStrengthComponentResult;
   partialTotal: number;
+  timingCaution: TimingCautionResult;
   asOf: string;
 }
 
@@ -616,6 +811,7 @@ export interface ComparisonSideResult {
   emCushion: number | null;
   cushionScore: number | null;
   structuralConfirmation: StructuralConfirmation | null;
+  momentumAdjustment: MomentumAdjustment | null;
   spreadPct: number | null;
   spreadLabel: "tight" | "moderate" | "wide" | null;
   skewComponent: SkewComponentResult;

@@ -19,13 +19,22 @@ import {
 } from "@/lib/options-math";
 import { deltaBandFlag, dteBandFlag, unreliableIvFlag } from "@/lib/flags";
 import { atmImpliedVolatility, ivTermStructure, volatilitySkew } from "@/lib/volatility";
-import { expectedMove, strikeCushion, cushionScore } from "@/lib/expected-move";
+import { expectedMove, strikeCushion, cushionScore, momentumBufferMultiplier } from "@/lib/expected-move";
 import {
   operativeSupportRef,
   operativeResistanceRef,
   structuralConfirmation,
   type OperativeReference,
 } from "@/lib/structural-levels";
+import { sectorGroupForTicker, peerTickersFor } from "@/lib/sector-groups";
+import {
+  describeRelativeStrength,
+  evaluateRelativeStrength,
+  RELATIVE_STRENGTH_FETCH_DAYS,
+  type PeerHistoricals,
+  type RelativeStrengthEvaluation,
+} from "@/lib/relative-strength";
+import type { MomentumAdjustment } from "@/types/api";
 
 const MAX_DAYS = 60;
 
@@ -43,7 +52,9 @@ function mapContract(
   underlyingPrice: number | undefined,
   dte: number,
   operativeRef: OperativeReference | null,
-  marketState: string | undefined
+  marketState: string | undefined,
+  momentumMultiplier: number,
+  momentumReason: string | null
 ) {
   const { effectiveIv, ivUnreliable, usingLastPriceFallback, delta } = effectiveIvAndDelta(
     contract,
@@ -64,8 +75,10 @@ function mapContract(
   if (canComputeGreeks) {
     const em = expectedMove(underlyingPrice!, effectiveIv!, dte);
     emCushion = strikeCushion(underlyingPrice!, contract.strike, em, optionType);
-    cushionScoreValue = cushionScore(emCushion);
+    cushionScoreValue = cushionScore(emCushion, momentumMultiplier);
   }
+  const momentumAdjustment: MomentumAdjustment | null =
+    momentumMultiplier > 1.0 && momentumReason != null ? { multiplier: momentumMultiplier, reason: momentumReason } : null;
 
   const touchProbability = delta != null ? probabilityOfTouch(delta) : null;
   // Only ever computed from a genuinely live two-sided market -- never
@@ -97,6 +110,7 @@ function mapContract(
     structuralConfirmation: operativeRef
       ? structuralConfirmation(contract.strike, operativeRef, optionType)
       : null,
+    momentumAdjustment,
   };
 }
 
@@ -107,10 +121,27 @@ export async function GET(
   const ticker = params.ticker.toUpperCase();
 
   try {
-    const [chain, closes, farChain] = await Promise.all([
+    const group = sectorGroupForTicker(ticker);
+    const peerTickers = peerTickersFor(ticker);
+
+    const [chain, closes, farChain, spyCloses, peerResults] = await Promise.all([
       fetchOptionsChainWithinDays(ticker, MAX_DAYS),
-      fetchHistoricalCloses(ticker, 300),
+      fetchHistoricalCloses(ticker, RELATIVE_STRENGTH_FETCH_DAYS),
       fetchTargetExpirationChain(ticker, FAR_TERM_TARGET_DTE).catch(() => null),
+      fetchHistoricalCloses("SPY", RELATIVE_STRENGTH_FETCH_DAYS),
+      Promise.all(
+        peerTickers.map(async (peerTicker): Promise<PeerHistoricals | null> => {
+          try {
+            const peerCloses = await fetchHistoricalCloses(peerTicker, RELATIVE_STRENGTH_FETCH_DAYS);
+            return { ticker: peerTicker, closes: peerCloses };
+          } catch {
+            // One peer failing to fetch shouldn't break the whole chain --
+            // same graceful-degradation contract as every other route that
+            // computes relative strength.
+            return null;
+          }
+        })
+      ),
     ]);
 
     const sma50 = simpleMovingAverage(closes, 50);
@@ -127,16 +158,34 @@ export async function GET(
         ? operativeResistanceRef(chain.underlyingPrice, sma50, ninetyDayRange?.high ?? null)
         : null;
 
+    // Phase 34 -- momentum-adjusted cushion buffer, calls only. A
+    // ticker-level constant (same for every call strike/expiration),
+    // computed once here, same pattern as supportRef/resistanceRef above.
+    const peerHistoricals = peerResults.filter((p): p is PeerHistoricals => p != null);
+    const relativeStrengthEvaluation: RelativeStrengthEvaluation = evaluateRelativeStrength(
+      ticker,
+      closes,
+      spyCloses,
+      group ? peerHistoricals : null
+    );
+    const callMomentumMultiplier = momentumBufferMultiplier(
+      "call",
+      relativeStrengthEvaluation,
+      relativeStrengthEvaluation.structuralTrend
+    );
+    const callMomentumReason =
+      callMomentumMultiplier > 1.0 ? describeRelativeStrength(relativeStrengthEvaluation, group?.name ?? null) : null;
+
     const expirations = chain.expirations.map((expiration) => {
       const dte = daysToExpiration(expiration.expirationDate);
       return {
         expirationDate: expiration.expirationDate.toISOString().slice(0, 10),
         dte,
         calls: expiration.calls.map((c) =>
-          mapContract(c, "call", chain.underlyingPrice, dte, resistanceRef, chain.marketState)
+          mapContract(c, "call", chain.underlyingPrice, dte, resistanceRef, chain.marketState, callMomentumMultiplier, callMomentumReason)
         ),
         puts: expiration.puts.map((p) =>
-          mapContract(p, "put", chain.underlyingPrice, dte, supportRef, chain.marketState)
+          mapContract(p, "put", chain.underlyingPrice, dte, supportRef, chain.marketState, 1.0, null)
         ),
       };
     });

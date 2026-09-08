@@ -7,6 +7,7 @@ import { AddPositionForm } from "./add-position-form";
 import { PositionCard } from "./position-card";
 import { ClosedPositionRow } from "./closed-position-row";
 import { PortfolioSummaryBar } from "./portfolio-summary-bar";
+import { ImportCsvPanel } from "./import-csv-panel";
 import type { PortfolioSummary } from "@/types/api";
 
 export function PositionsDashboard() {
@@ -37,6 +38,7 @@ export function PositionsDashboard() {
       <div className="flex flex-col gap-2">
         <h1 className="text-lg font-semibold text-foreground">Positions</h1>
         <AddPositionForm onAdded={load} />
+        <ImportCsvPanel onImported={load} />
       </div>
 
       {error && <ErrorNote message={error} />}

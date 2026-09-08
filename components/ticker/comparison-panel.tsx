@@ -1,12 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import type { ComparisonResponse, ComparisonSideResult, EntryScoreResponse, OptionsResponse } from "@/types/api";
+import type { ComparisonResponse, ComparisonSideResult, EntryScoreResponse, OptionsResponse, TimingCautionResult } from "@/types/api";
 import { useJsonFetch, type FetchState } from "@/lib/use-json-fetch";
 import { combineWithStrikeCushion } from "@/lib/entry-score";
 import { formatCurrency, formatMonthDay, formatPercent } from "@/lib/format";
 import { guidanceIndicatorById } from "@/lib/guidance-content";
 import { ImportanceBadge } from "@/components/shared/importance-badge";
+import { TimingCautionIcon } from "@/components/shared/timing-caution-badge";
 import { Section, SkeletonLines, ErrorNote, SubsectionHeader } from "./section";
 
 // ---------------------------------------------------------------------------
@@ -164,7 +165,13 @@ function computeCompletedScore(
   return combineWithStrikeCushion(partialTotal, side.cushionScore);
 }
 
-function EntryScoreBadge({ score }: { score: { total: number; tier: string } }) {
+function EntryScoreBadge({
+  score,
+  timingCaution,
+}: {
+  score: { total: number; tier: string };
+  timingCaution: TimingCautionResult | null | undefined;
+}) {
   const c = tierClasses(score.tier);
   return (
     <div className={`flex items-center justify-between gap-2 rounded-md border px-3 py-2 ${c.border} ${c.bg}`}>
@@ -174,6 +181,7 @@ function EntryScoreBadge({ score }: { score: { total: number; tier: string } }) 
           {score.total.toFixed(1)}
           <span className="text-xs font-normal text-muted">/10</span>
         </span>
+        <TimingCautionIcon timingCaution={timingCaution} />
         <span className={`rounded border px-1.5 py-0.5 text-[10px] font-medium ${c.text} ${c.border}`}>
           {score.tier}
         </span>
@@ -188,7 +196,18 @@ function EntryScoreBadge({ score }: { score: { total: number; tier: string } }) 
 // Assignment Prob/Touch, EM Cushion, Skew.
 // ---------------------------------------------------------------------------
 
-function CardStat({ label, value, indicatorId }: { label: string; value: string; indicatorId?: string }) {
+function CardStat({
+  label,
+  value,
+  indicatorId,
+  note,
+}: {
+  label: string;
+  value: string;
+  indicatorId?: string;
+  /** Extra line within the same cell -- e.g. Phase 34's momentum-adjustment disclosure. Never used to hide a score change silently. */
+  note?: React.ReactNode;
+}) {
   const indicator = indicatorId ? guidanceIndicatorById(indicatorId) : undefined;
   return (
     <div className="flex flex-col gap-0.5 rounded-md border border-border bg-background px-3 py-2">
@@ -197,6 +216,7 @@ function CardStat({ label, value, indicatorId }: { label: string; value: string;
         {indicator && <ImportanceBadge tier={indicator.importanceTier} />}
       </span>
       <span className="font-mono text-lg font-semibold text-foreground break-words">{value}</span>
+      {note}
     </div>
   );
 }
@@ -231,7 +251,15 @@ function structuralDetail(side: ComparisonSideResult): string {
  * literal utility strings, so it can't be centralized into one constant.
  */
 
-function CallCard({ side, score }: { side: ComparisonSideResult; score: { total: number; tier: string } | null }) {
+function CallCard({
+  side,
+  score,
+  timingCaution,
+}: {
+  side: ComparisonSideResult;
+  score: { total: number; tier: string } | null;
+  timingCaution: TimingCautionResult | null | undefined;
+}) {
   return (
     <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4 lg:grid lg:grid-rows-subgrid lg:row-span-8">
       <div className="flex items-baseline justify-between">
@@ -242,7 +270,7 @@ function CallCard({ side, score }: { side: ComparisonSideResult; score: { total:
       </div>
 
       {/* Always rendered (even when score is still null) so this row slot never disappears -- the 8-row comment above CallCard explains why. */}
-      <div>{score && <EntryScoreBadge score={score} />}</div>
+      <div>{score && <EntryScoreBadge score={score} timingCaution={timingCaution} />}</div>
 
       {/* Row 1 */}
       <div className="grid grid-cols-2 gap-2">
@@ -278,7 +306,18 @@ function CallCard({ side, score }: { side: ComparisonSideResult; score: { total:
       </div>
 
       {/* Row 5 */}
-      <CardStat label="EM Cushion + Structural" value={structuralDetail(side)} indicatorId="technical-em-cushion" />
+      <CardStat
+        label="EM Cushion + Structural"
+        value={structuralDetail(side)}
+        indicatorId="technical-em-cushion"
+        note={
+          side.momentumAdjustment && (
+            <span className="text-[10px] font-normal normal-case leading-relaxed text-amber-300">
+              ⚠ Momentum-adjusted ({side.momentumAdjustment.multiplier.toFixed(1)}x): {side.momentumAdjustment.reason}
+            </span>
+          )
+        }
+      />
 
       {/* Row 6 */}
       <CardStat label="Skew Contribution" value={skewDetail(side)} indicatorId="volatility-skew" />
@@ -290,10 +329,12 @@ function PutCard({
   side,
   ninetyDayRange,
   score,
+  timingCaution,
 }: {
   side: ComparisonSideResult;
   ninetyDayRange: { high: number; low: number } | null;
   score: { total: number; tier: string } | null;
+  timingCaution: TimingCautionResult | null | undefined;
 }) {
   return (
     <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4 lg:grid lg:grid-rows-subgrid lg:row-span-8">
@@ -305,7 +346,7 @@ function PutCard({
       </div>
 
       {/* Always rendered (even when score is still null) so this row slot never disappears -- the 8-row comment above CallCard explains why. */}
-      <div>{score && <EntryScoreBadge score={score} />}</div>
+      <div>{score && <EntryScoreBadge score={score} timingCaution={timingCaution} />}</div>
 
       {/* Row 1 */}
       <div className="grid grid-cols-2 gap-2">
@@ -502,8 +543,13 @@ export function ComparisonPanel({
             flow, one full-width column at a time.
           */}
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:grid-rows-[repeat(8,auto)]">
-            <CallCard side={comparison.data.callSide} score={callEntryScore} />
-            <PutCard side={comparison.data.putSide} ninetyDayRange={comparison.data.ninetyDayRange} score={putEntryScore} />
+            <CallCard side={comparison.data.callSide} score={callEntryScore} timingCaution={callScore.data?.timingCaution} />
+            <PutCard
+              side={comparison.data.putSide}
+              ninetyDayRange={comparison.data.ninetyDayRange}
+              score={putEntryScore}
+              timingCaution={putScore.data?.timingCaution}
+            />
           </div>
 
           <p className="text-xs text-muted">

@@ -18,13 +18,22 @@ import {
   SKEW_UNFAVORABLE_SCORE,
   TIER_BANDS,
 } from "./entry-score";
-import { CUSHION_SCORE_BANDS } from "./expected-move";
+import { CUSHION_SCORE_BANDS, MOMENTUM_BUFFER_MULTIPLIER } from "./expected-move";
 import { cushionLabel, percentileLabel, RISK_PROBABILITY_BANDS, RISK_PROBABILITY_NOTE } from "./indicator-labels";
 import { DELTA_BAND_MAX, DELTA_BAND_MIN, DTE_BAND_MAX, DTE_BAND_MIN } from "./flags";
 import { SPREAD_MODERATE_MAX_PCT, SPREAD_TIGHT_MAX_PCT } from "./options-math";
-import { SKEW_FLAT_THRESHOLD, TERM_STRUCTURE_THRESHOLD_PCT } from "./volatility";
+import { SKEW_FLAT_THRESHOLD, TERM_STRUCTURE_THRESHOLD_PCT, VOL_TREND_MEANINGFUL_CHANGE_PCT } from "./volatility";
+import {
+  ACTIVE_CATALYST_WINDOW_TRADING_DAYS,
+  RECENT_MOVE_LOOKBACK_TRADING_DAYS,
+  STABILIZATION_BAND_PCT,
+  STABILIZATION_MIN_SAMPLE_SIZE,
+} from "./timing-constants";
+import { DEFAULT_STABILIZATION_TRADING_DAYS } from "./event-digestion";
 import { RSI_OVERBOUGHT_THRESHOLD, RSI_OVERSOLD_THRESHOLD, RSI_PERIOD } from "./trend";
 import { MIN_OPEN_POSITIONS_FOR_PORTFOLIO_SUMMARY } from "./portfolio-analytics";
+import { APPROACHING_BREACH_PCT } from "./position-analytics";
+import { EFFICIENCY_UNDERPERFORM_RATIO, MIN_TICKERS_FOR_PORTFOLIO_AVERAGE } from "./position-efficiency";
 import {
   PRIMARY_LOOKBACK_DAYS,
   STRUCTURAL_TREND_LOOKBACK_DAYS,
@@ -135,9 +144,9 @@ export const GUIDANCE_INDICATORS: GuidanceIndicator[] = [
     importanceTier: "core",
     whatItMeasures:
       "How far a specific strike sits from the current price, measured in multiples of the stock's expected move to expiration -- the higher the cushion, the more room the stock has to move before that strike is threatened.",
-    howCalculated: `Expected move = price × IV × √(DTE / 365). Cushion = (price − strike) / expected move for a put, (strike − price) / expected move for a call. Banded into the Technical component of the Entry Score: ${cushionBandsText} The same bands also drive a plain-language label (Phase 28), shown next to the multiple: ${cushionLabelBandsText}`,
+    howCalculated: `Expected move = price × IV × √(DTE / 365). Cushion = (price − strike) / expected move for a put, (strike − price) / expected move for a call. Banded into the Technical component of the Entry Score: ${cushionBandsText} The same bands also drive a plain-language label (Phase 28), shown next to the multiple: ${cushionLabelBandsText} Phase 34: for a CALL specifically, when the underlying is both classified "outperforming" (lib/relative-strength.ts) and in a healthy higher-highs-higher-lows structure, the bands above are scaled up by ${MOMENTUM_BUFFER_MULTIPLIER}x before a real EM multiple is checked against them -- so a call needs ${MOMENTUM_BUFFER_MULTIPLIER}x the normal cushion distance to earn the same score. This comes from real trade-history analysis showing call losses averaging over 10x larger than put losses, concentrated in exactly this pattern: a strongly trending stock running straight through a strike the plain expected-move math called "safe." Puts are never adjusted -- the analysis found no comparable asymmetry there -- and the expected-move math itself is unchanged; only the score thresholds a call is banded against move. Always shown transparently next to the affected score (never a silent penalty) when active.`,
     interpretHigh: "A cushion of 2.0x or more (labeled \"Very Wide\") means the strike sits well outside the stock's statistically expected range -- safer, typically at the cost of lower premium.",
-    interpretLow: "A cushion near or below 0 (labeled \"Thin\") means the strike is already at or past the current price relative to the expected move -- meaningfully higher assignment risk.",
+    interpretLow: "A cushion near or below 0 (labeled \"Thin\") means the strike is already at or past the current price relative to the expected move -- meaningfully higher assignment risk. For a call under Phase 34's momentum adjustment, a cushion that would otherwise score well can score lower once the stricter bands apply -- the disclosure next to the score states why.",
     whereItAppears: "Strike Selector results panel (EM Cushion stat), Entry Score card (Technical row, once a strike is selected), and the Covered Call vs. Cash-Secured Put comparison panel (EM Cushion + Structural row, one per side) -- same underlying figure in every case, just labeled for whichever context it's shown in.",
   },
   {
@@ -340,6 +349,86 @@ export const GUIDANCE_INDICATORS: GuidanceIndicator[] = [
   },
 
   // ---------------------------------------------------------------------
+  // Timing-context indicators (Phase 33) -- every one of these answers
+  // "has this settled down yet," never "what will happen next." All
+  // "supporting" tier: they inform timing/strike decisions without being
+  // part of the core 0-10 score.
+  // ---------------------------------------------------------------------
+  {
+    id: "active-catalyst",
+    name: "Active/Unresolved Catalyst",
+    category: "entry",
+    importanceTier: "supporting",
+    whatItMeasures:
+      "Whether a financing event (debt/convertible-note offering, share exchange, secondary offering, lockup expiration) is still unresolved or only recently settled -- not whether it's good or bad news, just whether the market has had time to digest it.",
+    howCalculated: `Reuses the Phase 16 news classifier's existing Finnhub company-news fetch and classification call, extended with a "financing-event" category and a status ("announced" / "pricing" / "closing-settled") + mentioned date extracted from the headline text. A settled event stays flagged active for ${ACTIVE_CATALYST_WINDOW_TRADING_DAYS} trading days after its stated settlement date; an announced/pricing (not-yet-settled) or genuinely unclear-status event stays flagged indefinitely, since it can't yet be said to be resolved. After the window, the event drops off this flag but remains visible as permanent history in the Event Timeline.`,
+    interpretHigh: "An active catalyst is flagged -- the market may still be digesting new supply/dilution or deal terms; worth reading the actual headline before trusting the current premium as settled.",
+    interpretLow: "No active catalyst -- nothing unresolved of this kind found in recent news for this ticker.",
+    whereItAppears: "Feeds into Timing Caution's reasoning (Entry Score cards and Strike Selector's completed score display).",
+  },
+  {
+    id: "post-move-entry-caution",
+    name: "Post-Move Entry Caution",
+    category: "entry",
+    importanceTier: "supporting",
+    whatItMeasures:
+      "Whether a significant price move happened very recently -- a factual \"you're entering shortly after a large move\" flag, never a call on whether the move will continue, reverse, or fade.",
+    howCalculated: `Reuses the Phase 32 Event Timeline's detectSignificantMoves() directly (its existing single-day >=5% threshold), checking specifically for a flagged move within the last ${RECENT_MOVE_LOOKBACK_TRADING_DAYS} trading days.`,
+    interpretHigh: "Flagged -- verify this move's driver (see the Event Timeline's cited catalyst, if any) before relying on the current premium; a fresh move can mean today's IV hasn't settled into a stable read yet.",
+    interpretLow: "Not flagged -- no significant move in the last few trading days.",
+    whereItAppears: "Feeds into Timing Caution's reasoning (Entry Score cards and Strike Selector's completed score display).",
+  },
+  {
+    id: "realized-vol-trend",
+    name: "Realized Volatility Trend",
+    category: "entry",
+    importanceTier: "supporting",
+    whatItMeasures:
+      "Whether the stock's own short-term choppiness is still expanding, contracting, or holding stable -- a read on whether realized volatility itself has settled down, independent of where IV/HV Percentile currently sits.",
+    howCalculated: `Rolling 5-day annualized realized volatility (lib/volatility.ts's historicalVolatility) computed at today, 5 trading days ago, and 10 trading days ago. Classified "expanding" or "contracting" only when the three readings move monotonically AND the overall today-vs-10-days-ago change is at least ${VOL_TREND_MEANINGFUL_CHANGE_PCT}% (a trivial drift doesn't count); otherwise "stable." No reading (rather than a fabricated "stable") when there isn't enough daily-close history for all three windows.`,
+    interpretHigh: "Expanding -- the stock is still getting choppier day to day, one of the conditions Timing Caution checks for.",
+    interpretLow: "Contracting or stable -- short-term realized volatility has leveled off or is easing.",
+    whereItAppears: "Feeds into Timing Caution's reasoning (Entry Score cards and Strike Selector's completed score display).",
+  },
+  {
+    id: "event-digestion-status",
+    name: "Event Digestion Status",
+    category: "entry",
+    importanceTier: "supporting",
+    whatItMeasures:
+      "For a flagged active catalyst or recent move, how far this ticker's IV Percentile (or HV Percentile, when there wasn't enough real iv_history as of that date) has moved back toward its own trailing baseline since then, and how that compares to how long this kind of move has typically taken to settle for this specific ticker.",
+    howCalculated: `Percentile rank (lib/volatility.ts's percentileRank, the same underlying primitive lib/entry-score.ts's IV component uses -- that file's own scoring math is never touched) of IV or HV at the event date ("event peak") versus today, expressed as e.g. "IV Percentile: 61st today vs 94th at event peak, 2 of 6 typical trading days elapsed." The "typical trading days" figure comes from Historical Stabilization Pattern below, or a conservative default of ${DEFAULT_STABILIZATION_TRADING_DAYS} trading days when that ticker doesn't have enough history yet.`,
+    interpretHigh: "A percentile still far from its trailing baseline, with few of the typical trading days elapsed -- consistent with a still-unsettled reading.",
+    interpretLow: "A percentile that's already moved back close to its trailing baseline -- consistent with the event having been digested.",
+    whereItAppears: "Feeds into Timing Caution's reasoning (Entry Score cards and Strike Selector's completed score display), only when Timing Caution fires.",
+  },
+  {
+    id: "stabilization-pattern",
+    name: "Historical Stabilization Pattern",
+    category: "entry",
+    importanceTier: "supporting",
+    whatItMeasures:
+      "How long THIS specific ticker's own past significant moves have historically taken for its realized volatility to settle back down -- a ticker-specific baseline, not a generic market-wide assumption.",
+    howCalculated: `Walks forward from each of this ticker's past significant-move events (Phase 32's event_annotations cache, never re-detected here) day by day, measuring how many trading days realized volatility (Realized Volatility Trend's own 5-day window) took to return within ${STABILIZATION_BAND_PCT}% of its pre-event baseline. Reports the median days-to-stabilize alongside the sample size always -- below n=${STABILIZATION_MIN_SAMPLE_SIZE}, explicitly labeled "insufficient history for this ticker" rather than presented as a reliable figure built on 1-2 events.`,
+    interpretHigh: "A longer typical stabilization window (or \"insufficient history\") means more patience is warranted before treating this ticker's post-event premium as settled.",
+    interpretLow: "A short, well-sampled (n>=3) typical stabilization window means this ticker has historically settled down quickly after a move.",
+    whereItAppears: "Feeds into Timing Caution's reasoning (Entry Score cards and Strike Selector's completed score display).",
+  },
+  {
+    id: "timing-caution",
+    name: "Timing Caution",
+    category: "entry",
+    importanceTier: "supporting",
+    whatItMeasures:
+      "The consolidated signal for \"has this ticker actually finished digesting its last event/move, or is there still real reason for caution before relying on the current premium\" -- combines Active/Unresolved Catalyst, Post-Move Entry Caution, Realized Volatility Trend, and Historical Stabilization Pattern above. Deliberately separate from and never subtracted from the Entry Score -- attached to the score display, not folded into its math.",
+    howCalculated:
+      "Fires only when conditions stack: an active catalyst and/or a recent significant move, AND realized volatility still classified 'expanding,' AND fewer trading days have elapsed since the trigger than this ticker's own historical median time-to-stabilize (or the conservative default when that history is insufficient). Always returns the full list of which specific conditions triggered it, with their actual values -- never just a boolean.",
+    interpretHigh: "Active -- the evidence stacks toward \"this hasn't settled yet.\" The Entry Score number itself is completely unaffected; this is a separate flag to read alongside it before sizing a trade off the current premium.",
+    interpretLow: "Not active -- either no active catalyst/recent move, or the ones that exist look to have already settled by this ticker's own historical pattern.",
+    whereItAppears: "A warning icon directly adjacent to the score digits on both the ticker page's Entry Score cards and the Strike Selector's completed score display -- click/tap to expand the full reasoning list.",
+  },
+
+  // ---------------------------------------------------------------------
   // Position-management indicators
   // ---------------------------------------------------------------------
   {
@@ -403,6 +492,32 @@ export const GUIDANCE_INDICATORS: GuidanceIndicator[] = [
     interpretHigh: "Classified Real Breakdown -- sustained adverse move and/or high urgency (low DTE, large breach); recommended action is typically close.",
     interpretLow: "Classified Sell-the-News -- a concentrated, likely-to-fade reaction with enough DTE and small enough breach to hold through; recommended action is typically hold.",
     whereItAppears: "Positions page, shown as a red-bordered alert card (with reasoning bullets) only when an open position is currently in-the-money.",
+  },
+  {
+    id: "roll-calculator",
+    name: "Roll Calculator",
+    category: "position-management",
+    importanceTier: "supporting",
+    whatItMeasures:
+      "A third option alongside Hold/Close for a position that's ITM or approaching it: what rolling the current contract to a new strike and/or expiration would actually cost or pay, and how much more room the new strike buys -- discussed as a concept in the very first lesson behind this app but never built until real trade-history losses (deep-ITM calls bought back outright, with no visibility into the roll alternative) made the gap concrete.",
+    howCalculated: `Shown once a position is ITM or within ${Math.abs(APPROACHING_BREACH_PCT)}% of the strike (a widened, "approaching breach" version of the ITM check's own breach formula -- lib/position-analytics.ts's computeBreachPct). Cost to close the current leg reuses the exact same buyback-cost lookup (findCurrentContract) as every other "close now" figure on this page. Credit from the new contract is that contract's live reference premium from the same chain. Net roll credit/debit = credit from new contract − cost to close current, in total dollars (positive = paid to roll; negative = costs money to roll) -- directly comparable to the realized loss on the current leg, computed identically to it. The new contract's EM Cushion, structural confirmation, and assignment probability reuse the exact same functions the ticker page's Strike Selector and Entry Score use -- no parallel scoring system.`,
+    interpretHigh: "A net credit (positive) with a meaningfully wider EM Cushion on the new strike means the roll both pays you and buys real room -- worth weighing against simply holding or closing outright.",
+    interpretLow: "A net debit (negative) means rolling costs money up front; whether that's worth it depends on how much cushion the new strike buys, shown right alongside it -- this panel states the numbers, it doesn't recommend one path.",
+    whereItAppears: "Positions page, as a \"Roll This Position\" section on any open position card that's ITM or approaching it, alongside (not replacing) the Hold/Close recommendation and Assignment Opportunity Cost panel.",
+  },
+  {
+    id: "position-efficiency",
+    name: "Premium Efficiency",
+    category: "position-management",
+    importanceTier: "supporting",
+    whatItMeasures:
+      "For an open, stock-backed (covered-call) position: how much premium income the holding has actually generated per dollar of capital committed, annualized, compared against the portfolio's own average -- a read on whether this specific capital is working as hard as the rest of the book, not a scored input and never a directive to sell.",
+    howCalculated:
+      `Sums total $ premium collected across every logged covered-call row for the ticker (any status -- open, closed, assigned, expired all persist and all count), divided by capital committed (cost basis × shares, from the most recently opened row) and annualized by 365 / daysTracked, where daysTracked runs from the earliest logged opened_at for that ticker to today. The portfolio average is the same calculation's mean across every ticker with logged covered-call history. Flagged only when a ticker's yield is below ${(EFFICIENCY_UNDERPERFORM_RATIO * 100).toFixed(0)}% of that average AND at least ${MIN_TICKERS_FOR_PORTFOLIO_AVERAGE} distinct tickers have computable history -- below that sample size the comparison is shown but explicitly labeled not yet meaningful, never silently hidden. ` +
+      `KNOWN LIMITATION, stated plainly rather than worked around: this can only see premium collected on positions actually logged in this app -- it cannot see any covered-call history for a ticker from before it was first tracked here, so daysTracked is a proxy for "since this app started tracking the holding," not the true share-acquisition date (that date isn't separately captured by the schema). A long-held stock only recently logged here will understate its true history until a future CSV-import phase can backfill it.`,
+    interpretHigh: "A yield well above the portfolio average means this holding's calls have generated strong premium income relative to the capital tied up in it.",
+    interpretLow: `A yield flagged well below average (under ${(EFFICIENCY_UNDERPERFORM_RATIO * 100).toFixed(0)}% of it) means this specific capital has generated comparatively little premium income relative to the rest of the book -- worth considering whether it could work harder elsewhere, though this is a comparison to weigh, not a signal to act on by itself.`,
+    whereItAppears: "Positions page, on any open covered-call position card, as a \"Premium Efficiency\" note alongside the Roll Calculator and Assignment Opportunity Cost sections.",
   },
   {
     id: "close-signal",

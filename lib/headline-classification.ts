@@ -23,6 +23,7 @@ export type IndividualCategory =
   | "executive-change"
   | "partnership"
   | "notable-investor-move"
+  | "financing-event"
   | "new-to-watch"
   | "other";
 
@@ -42,8 +43,18 @@ export const INDIVIDUAL_CATEGORIES: readonly IndividualCategory[] = [
   "executive-change",
   "partnership",
   "notable-investor-move",
+  "financing-event",
   "new-to-watch",
   "other",
+];
+
+/** Phase 33 -- only meaningful for category "financing-event". */
+export type FinancingEventStatus = "announced" | "pricing" | "closing-settled";
+
+export const FINANCING_EVENT_STATUSES: readonly FinancingEventStatus[] = [
+  "announced",
+  "pricing",
+  "closing-settled",
 ];
 
 /** Recommended batch size -- keeps a single call's output comfortably within budget while bounding call count. */
@@ -61,6 +72,10 @@ export interface ClassifiableHeadline {
 export interface HeadlineClassification {
   level: HeadlineLevel;
   category: HeadlineCategory;
+  /** Phase 33 -- only set (and only meaningful) when category === "financing-event"; null when the status isn't determinable from the headline text. */
+  financingStatus?: FinancingEventStatus | null;
+  /** Phase 33 -- ISO date (YYYY-MM-DD) the headline states the financing event occurred/occurs, when stated; null otherwise. Only meaningful for "financing-event". */
+  financingEventDate?: string | null;
 }
 
 export const HEADLINE_CLASSIFICATION_SYSTEM_PROMPT = `You classify financial news headlines for an options-trading dashboard. For each headline, decide:
@@ -69,7 +84,12 @@ export const HEADLINE_CLASSIFICATION_SYSTEM_PROMPT = `You classify financial new
 
 2. CATEGORY, chosen from the set matching the level you picked:
    - macro: "monetary-policy" (Fed/central bank rates and commentary), "economic-data" (jobs, inflation, GDP, and other releases), "geopolitical" (conflicts, elections, trade/tariff actions), "regulatory" (market-wide rule or policy changes, not aimed at one company)
-   - individual: "earnings" (results, guidance), "M&A-buyback" (mergers, acquisitions, buybacks), "analyst-action" (upgrades, downgrades, price targets), "executive-change" (CEO/CFO/leadership moves), "partnership" (deals, collaborations, contracts), "notable-investor-move" (13F filings, activist stakes, insider buying/selling), "new-to-watch" (a company entering relevance for reasons not covered by the other categories -- e.g. an IPO, a new product launch, unusual volume), "other" (individual-company news that doesn't fit any category above)
+   - individual: "earnings" (results, guidance), "M&A-buyback" (mergers, acquisitions, buybacks), "analyst-action" (upgrades, downgrades, price targets), "executive-change" (CEO/CFO/leadership moves), "partnership" (deals, collaborations, contracts), "notable-investor-move" (13F filings, activist stakes, insider buying/selling), "financing-event" (debt or convertible-note offerings, share exchanges, secondary offerings, lockup expirations), "new-to-watch" (a company entering relevance for reasons not covered by the other categories -- e.g. an IPO, a new product launch, unusual volume), "other" (individual-company news that doesn't fit any category above)
+
+For a headline classified "financing-event", also determine:
+   - STATUS, from what the headline explicitly states: "announced" (a new offering/note/exchange is being announced), "pricing" (terms/pricing are being set), "closing-settled" (the deal has closed/settled/completed) -- or leave it unset if genuinely unclear from the text.
+   - EVENT DATE, an explicit date (YYYY-MM-DD) mentioned in the headline or summary for when this occurred -- or leave it unset if no date is stated. Never infer a date that isn't actually written.
+   These two fields are meaningless for every other category -- leave both unset unless the category is "financing-event".
 
 Classify strictly from what the headline and summary actually say -- don't guess at implications not stated. Every headline gets exactly one level and one category from that level's set. Return your classifications in the same order as the input list, one per headline, each tagged with its 1-based index matching the numbered list.`;
 
@@ -105,6 +125,16 @@ const CLASSIFY_HEADLINES_INPUT_SCHEMA: Anthropic.Tool.InputSchema = {
           },
           level: { type: "string", enum: ["macro", "individual"] },
           category: { type: "string", enum: ALL_CATEGORIES as unknown as string[] },
+          financingStatus: {
+            type: "string",
+            enum: FINANCING_EVENT_STATUSES as unknown as string[],
+            description: "Only for category 'financing-event' -- omit for every other category, and omit when unclear.",
+          },
+          financingEventDate: {
+            type: "string",
+            description:
+              "Only for category 'financing-event' -- an explicit YYYY-MM-DD date stated in the headline/summary. Omit for every other category, and omit when no date is stated.",
+          },
         },
         required: ["index", "level", "category"],
       },
@@ -171,7 +201,18 @@ export function parseHeadlineClassifications(
       level = derivedLevel;
     }
 
-    result.set(headline.id, { level, category: category as HeadlineCategory });
+    let financingStatus: FinancingEventStatus | null = null;
+    let financingEventDate: string | null = null;
+    if (category === "financing-event") {
+      if (typeof e.financingStatus === "string" && (FINANCING_EVENT_STATUSES as readonly string[]).includes(e.financingStatus)) {
+        financingStatus = e.financingStatus as FinancingEventStatus;
+      }
+      if (typeof e.financingEventDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(e.financingEventDate)) {
+        financingEventDate = e.financingEventDate;
+      }
+    }
+
+    result.set(headline.id, { level, category: category as HeadlineCategory, financingStatus, financingEventDate });
   }
 
   return result;

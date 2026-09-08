@@ -55,7 +55,7 @@ export async function getOrClassifyHeadlines(
 
   const { data: cachedRows, error: readError } = await supabase
     .from("headline_classifications")
-    .select("id, level, category")
+    .select("id, level, category, financing_status, financing_event_date")
     .in("id", ids);
 
   if (readError) {
@@ -63,7 +63,12 @@ export async function getOrClassifyHeadlines(
   }
 
   for (const row of cachedRows ?? []) {
-    result.set(row.id, { level: row.level, category: row.category });
+    result.set(row.id, {
+      level: row.level,
+      category: row.category,
+      financingStatus: row.financing_status,
+      financingEventDate: row.financing_event_date,
+    });
   }
 
   const uncached = ids.filter((id) => !result.has(id)).map((id) => byId.get(id)!);
@@ -77,7 +82,13 @@ export async function getOrClassifyHeadlines(
       const c = classified.get(h.id);
       if (!c) continue; // dropped by validation -- will simply be re-attempted next load
       result.set(h.id, c);
-      rows.push({ id: h.id, level: c.level, category: c.category });
+      rows.push({
+        id: h.id,
+        level: c.level,
+        category: c.category,
+        financing_status: c.financingStatus ?? null,
+        financing_event_date: c.financingEventDate ?? null,
+      });
     }
 
     if (rows.length > 0) {

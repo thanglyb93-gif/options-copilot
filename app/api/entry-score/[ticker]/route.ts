@@ -19,6 +19,7 @@ import {
   type PeerHistoricals,
 } from "@/lib/relative-strength";
 import { scoreTickerLevel, type TradeDirection } from "@/lib/entry-score";
+import { evaluateTimingCaution } from "@/lib/timing-caution";
 
 /**
  * Ticker-level entry score only (IV Percentile + Events + Skew +
@@ -26,7 +27,14 @@ import { scoreTickerLevel, type TradeDirection } from "@/lib/entry-score";
  * here -- it's per-strike (see /api/options's emCushion/cushionScore),
  * added client-side once a chain row is selected to complete this to a
  * 0-10 total.
+ *
+ * Phase 33 also computes Timing Caution alongside the score (a separate,
+ * parallel signal -- see lib/timing-caution.ts) -- its own catalyst/
+ * stabilization lookups can chain several Finnhub + Claude + Yahoo
+ * round-trips, same reasoning as the Event Timeline route's maxDuration.
  */
+export const maxDuration = 60;
+
 export async function GET(
   request: Request,
   { params }: { params: { ticker: string } }
@@ -52,7 +60,7 @@ export async function GET(
       fetchTargetExpirationChain(ticker),
       supabase
         .from("iv_history")
-        .select("implied_volatility_avg")
+        .select("date, implied_volatility_avg")
         .eq("ticker", ticker)
         .order("date", { ascending: true }),
       fetchHistoricalCloses(ticker, RELATIVE_STRENGTH_FETCH_DAYS),
@@ -113,6 +121,10 @@ export async function GET(
       .map((r) => r.implied_volatility_avg)
       .filter((v): v is number => typeof v === "number");
 
+    const ivHistoryWithDates = (ivHistory.data ?? [])
+      .filter((r): r is { date: string; implied_volatility_avg: number } => typeof r.implied_volatility_avg === "number")
+      .map((r) => ({ date: r.date, iv: r.implied_volatility_avg }));
+
     // Approximate stand-in while historicalValues is thin -- built purely
     // from already-fetched daily closes, no extra data source needed.
     const hvFallback = {
@@ -141,10 +153,19 @@ export async function GET(
       { evaluation: relativeStrengthEvaluation, sectorGroupName: group?.name ?? null }
     );
 
+    // Phase 33 -- a separate, parallel signal attached to the score
+    // display; never folded into `result`'s own scoring math above.
+    const timingCaution = await evaluateTimingCaution(supabase, ticker, direction as TradeDirection, {
+      historicals: tickerCloses,
+      currentIv,
+      ivHistory: ivHistoryWithDates,
+    });
+
     return NextResponse.json({
       ticker,
       direction,
       ...result,
+      timingCaution,
       asOf: new Date().toISOString(),
     });
   } catch (error) {

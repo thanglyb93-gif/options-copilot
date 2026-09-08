@@ -46,10 +46,19 @@ export const RELATIVE_STRENGTH_FETCH_DAYS = 400;
 // Return comparison
 // ---------------------------------------------------------------------------
 
-function totalReturnPct(closes: DailyCloseLike[], lookbackDays: number): number | null {
+/**
+ * `asOf` defaults to now -- every existing (live, "as of today") caller
+ * is unaffected. Phase 38's counterfactual backtest is the one caller
+ * that passes a past date, to retroactively evaluate what this same
+ * window comparison would have read AT a historical entry date rather
+ * than today; the upper bound below keeps that honest even if the
+ * caller's `closes` array happens to include later dates than `asOf`.
+ */
+function totalReturnPct(closes: DailyCloseLike[], lookbackDays: number, asOf: Date = new Date()): number | null {
   if (closes.length < 2) return null;
-  const cutoffDate = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-  const inWindow = closes.filter((c) => c.date >= cutoffDate);
+  const asOfDate = asOf.toISOString().slice(0, 10);
+  const cutoffDate = new Date(asOf.getTime() - lookbackDays * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const inWindow = closes.filter((c) => c.date >= cutoffDate && c.date <= asOfDate);
   if (inWindow.length < 2) return null;
   const start = inWindow[0].close;
   const end = inWindow[inWindow.length - 1].close;
@@ -86,16 +95,17 @@ export function computeRelativeStrength(
   tickerHistoricals: DailyCloseLike[],
   spyHistoricals: DailyCloseLike[],
   sectorPeerHistoricals: PeerHistoricals[] | null,
-  lookbackDays: number
+  lookbackDays: number,
+  asOf: Date = new Date()
 ): RelativeStrengthWindow {
-  const tickerReturnPct = totalReturnPct(tickerHistoricals, lookbackDays);
-  const spyReturnPct = totalReturnPct(spyHistoricals, lookbackDays);
+  const tickerReturnPct = totalReturnPct(tickerHistoricals, lookbackDays, asOf);
+  const spyReturnPct = totalReturnPct(spyHistoricals, lookbackDays, asOf);
   const vsMarketPct = tickerReturnPct != null && spyReturnPct != null ? tickerReturnPct - spyReturnPct : null;
 
   let sectorReturnPct: number | null = null;
   if (sectorPeerHistoricals && sectorPeerHistoricals.length > 0) {
     const peerReturns = sectorPeerHistoricals
-      .map((p) => totalReturnPct(p.closes, lookbackDays))
+      .map((p) => totalReturnPct(p.closes, lookbackDays, asOf))
       .filter((v): v is number => v != null);
     sectorReturnPct = peerReturns.length > 0 ? peerReturns.reduce((a, b) => a + b, 0) / peerReturns.length : null;
   }
@@ -148,8 +158,10 @@ function netDirection(values: number[]): number {
  * structure in the window to say anything (e.g. a very short or very
  * choppy history with fewer than MIN_SWING_POINTS highs/lows).
  */
-export function classifyStructuralTrend(closes: DailyCloseLike[]): StructuralTrend | null {
-  const window = closes.slice(-STRUCTURAL_TREND_LOOKBACK_DAYS);
+export function classifyStructuralTrend(closes: DailyCloseLike[], asOf: Date = new Date()): StructuralTrend | null {
+  const asOfDate = asOf.toISOString().slice(0, 10);
+  const upToAsOf = closes.filter((c) => c.date <= asOfDate);
+  const window = upToAsOf.slice(-STRUCTURAL_TREND_LOOKBACK_DAYS);
   const prices = window.map((c) => c.close);
   const swings = findSwingPoints(prices, SWING_POINT_WINDOW_DAYS);
 
@@ -223,30 +235,34 @@ export function evaluateRelativeStrength(
   ticker: string,
   tickerHistoricals: DailyCloseLike[],
   spyHistoricals: DailyCloseLike[],
-  sectorPeerHistoricals: PeerHistoricals[] | null
+  sectorPeerHistoricals: PeerHistoricals[] | null,
+  asOf: Date = new Date()
 ): RelativeStrengthEvaluation {
   const window30 = computeRelativeStrength(
     ticker,
     tickerHistoricals,
     spyHistoricals,
     sectorPeerHistoricals,
-    VERY_SHORT_LOOKBACK_DAYS
+    VERY_SHORT_LOOKBACK_DAYS,
+    asOf
   );
   const window90 = computeRelativeStrength(
     ticker,
     tickerHistoricals,
     spyHistoricals,
     sectorPeerHistoricals,
-    SHORT_LOOKBACK_DAYS
+    SHORT_LOOKBACK_DAYS,
+    asOf
   );
   const window180 = computeRelativeStrength(
     ticker,
     tickerHistoricals,
     spyHistoricals,
     sectorPeerHistoricals,
-    PRIMARY_LOOKBACK_DAYS
+    PRIMARY_LOOKBACK_DAYS,
+    asOf
   );
-  const structuralTrend = classifyStructuralTrend(tickerHistoricals);
+  const structuralTrend = classifyStructuralTrend(tickerHistoricals, asOf);
   const suitability = classifySuitability(window180.vsMarketPct, window180.vsSectorPct, structuralTrend);
 
   return { ticker, window30, window90, window180, structuralTrend, suitability };

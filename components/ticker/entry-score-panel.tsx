@@ -7,6 +7,7 @@ import { guidanceIndicatorById } from "@/lib/guidance-content";
 import { cushionLabel, percentileLabel, skewLeanLabel } from "@/lib/indicator-labels";
 import { ImportanceBadge } from "@/components/shared/importance-badge";
 import { IndicatorLabel } from "@/components/shared/indicator-label";
+import { TimingCautionIcon } from "@/components/shared/timing-caution-badge";
 import type {
   EntryScoreResponse,
   IvComponentResult,
@@ -26,20 +27,43 @@ function ComponentRow({
   label,
   detail,
   indicatorId,
+  footnote,
 }: {
   label: string;
   detail: React.ReactNode;
   indicatorId?: string;
+  /** A full-width sentence below the label/detail row -- e.g. Phase 34's momentum-adjustment disclosure. Never used to hide a score change silently. */
+  footnote?: React.ReactNode;
 }) {
   const indicator = indicatorId ? guidanceIndicatorById(indicatorId) : undefined;
   return (
-    <div className="flex items-baseline justify-between gap-2 text-sm">
-      <span className="flex items-center gap-1.5 text-muted">
-        {label}
-        {indicator && <ImportanceBadge tier={indicator.importanceTier} />}
-      </span>
-      <span className="font-mono text-foreground">{detail}</span>
+    <div className="flex flex-col gap-1">
+      <div className="flex items-baseline justify-between gap-2 text-sm">
+        <span className="flex items-center gap-1.5 text-muted">
+          {label}
+          {indicator && <ImportanceBadge tier={indicator.importanceTier} />}
+        </span>
+        <span className="font-mono text-foreground">{detail}</span>
+      </div>
+      {footnote}
     </div>
+  );
+}
+
+/**
+ * Phase 34 -- transparency disclosure for the momentum-adjusted cushion
+ * buffer (lib/expected-move.ts's momentumBufferMultiplier): whenever it's
+ * actually active for the selected call, this states the multiplier and
+ * the exact underlying/sector evidence driving it, in plain sight next
+ * to the score it affects. Never a silent penalty.
+ */
+function MomentumAdjustmentNote({ matchedSelection }: { matchedSelection: StrikeSelection | null }) {
+  const adjustment = matchedSelection?.contract.momentumAdjustment;
+  if (!adjustment) return null;
+  return (
+    <p className="text-[11px] leading-relaxed text-amber-300">
+      ⚠ Momentum-adjusted cushion required ({adjustment.multiplier.toFixed(1)}x): {adjustment.reason}
+    </p>
   );
 }
 
@@ -169,6 +193,7 @@ function EntryScoreCard({
                   {combined.total.toFixed(1)}
                 </span>
                 <span className="text-muted">/ 10</span>
+                <TimingCautionIcon timingCaution={data.timingCaution} />
               </div>
               <span
                 className={`w-fit rounded border px-2 py-0.5 text-xs font-medium ${tierClasses(combined.tier).text} ${tierClasses(combined.tier).border}`}
@@ -183,6 +208,7 @@ function EntryScoreCard({
                   {data.partialTotal.toFixed(1)}
                 </span>
                 <span className="text-muted">/ 8 (partial)</span>
+                <TimingCautionIcon timingCaution={data.timingCaution} />
               </div>
               <span className="text-xs text-muted">+ up to 2 more from your selected strike</span>
             </>
@@ -198,6 +224,7 @@ function EntryScoreCard({
               label="Technical"
               detail={<TechnicalDetail matchedSelection={matchedSelection} />}
               indicatorId="technical-em-cushion"
+              footnote={<MomentumAdjustmentNote matchedSelection={matchedSelection} />}
             />
             <ComponentRow
               label="Events"

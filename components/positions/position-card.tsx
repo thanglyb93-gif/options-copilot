@@ -7,6 +7,8 @@ import { PROFIT_TARGET_CC_PCT, PROFIT_TARGET_CSP_PCT } from "@/lib/position-anal
 import { coveredCallHoldingOutcomes } from "@/lib/options-math";
 import { ProfitHistoryChart } from "./profit-history-chart";
 import { AssignmentOpportunityCostPanel } from "./assignment-opportunity-cost-panel";
+import { RollCalculatorPanel } from "./roll-calculator-panel";
+import { PositionEfficiencyNote } from "./position-efficiency-note";
 
 export function PositionCard({
   position,
@@ -241,6 +243,18 @@ export function PositionCard({
           {a.assignmentOpportunityCost && (
             <AssignmentOpportunityCostPanel result={a.assignmentOpportunityCost} alignment={a.scenarioAlignment} />
           )}
+
+          {a.rollEligible && (
+            <RollCalculatorPanel
+              positionId={position.id}
+              ticker={position.ticker}
+              positionType={position.position_type}
+              currentStrike={position.strike}
+              currentExpirationDate={position.expiration_date}
+            />
+          )}
+
+          {a.efficiency && <PositionEfficiencyNote efficiency={a.efficiency} />}
         </>
       )}
 

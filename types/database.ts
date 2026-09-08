@@ -8,7 +8,7 @@
  */
 
 import type { BriefingContent, DirectionalLean } from "@/lib/briefing";
-import type { HeadlineCategory, HeadlineLevel } from "@/lib/headline-classification";
+import type { FinancingEventStatus, HeadlineCategory, HeadlineLevel } from "@/lib/headline-classification";
 import type { InsiderActivitySummary } from "@/lib/sec-edgar";
 
 export type PositionType = "covered_call" | "cash_secured_put";
@@ -64,6 +64,9 @@ export type HeadlineClassificationRow = {
   id: string;
   level: HeadlineLevel;
   category: HeadlineCategory;
+  /** Phase 33 -- only meaningful when category is "financing-event". */
+  financing_status: FinancingEventStatus | null;
+  financing_event_date: string | null;
   classified_at: string;
 };
 
@@ -174,7 +177,7 @@ export interface Database {
       };
       headline_classifications: {
         Row: HeadlineClassificationRow;
-        Insert: Partial<Pick<HeadlineClassificationRow, "classified_at">> &
+        Insert: Partial<Pick<HeadlineClassificationRow, "classified_at" | "financing_status" | "financing_event_date">> &
           Pick<HeadlineClassificationRow, "id" | "level" | "category">;
         Update: Partial<HeadlineClassificationRow>;
         Relationships: [];

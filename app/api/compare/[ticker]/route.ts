@@ -16,7 +16,8 @@ import {
   spreadQuality,
   type OptionType,
 } from "@/lib/options-math";
-import { cushionScore, expectedMove, strikeCushion } from "@/lib/expected-move";
+import { cushionScore, expectedMove, momentumBufferMultiplier, strikeCushion } from "@/lib/expected-move";
+import type { MomentumAdjustment } from "@/types/api";
 import {
   operativeResistanceRef,
   operativeSupportRef,
@@ -104,6 +105,7 @@ interface SideResult {
   emCushion: number | null;
   cushionScore: number | null;
   structuralConfirmation: { confirmed: boolean; referenceLabel: string } | null;
+  momentumAdjustment: MomentumAdjustment | null;
   spreadPct: number | null;
   spreadLabel: "tight" | "moderate" | "wide" | null;
   skewComponent: ReturnType<typeof scoreSkewComponent>;
@@ -138,6 +140,8 @@ function evaluateSide({
   allPutsAtExpiration,
   contracts,
   costBasisIfCall,
+  momentumMultiplier,
+  momentumReason,
 }: {
   direction: TradeDirection;
   contract: CallOrPut;
@@ -151,6 +155,9 @@ function evaluateSide({
   allPutsAtExpiration: CallOrPut[];
   contracts: number;
   costBasisIfCall: number | null;
+  /** Phase 34 -- 1.0 for puts; > 1.0 for a call when the momentum-adjusted cushion buffer is active. */
+  momentumMultiplier: number;
+  momentumReason: string | null;
 }): SideResult {
   const optionType: OptionType = direction === "call" ? "call" : "put";
   const { effectiveIv, delta, usingLastPriceFallback } = effectiveIvAndDelta(
@@ -164,7 +171,9 @@ function evaluateSide({
 
   const emValue = canComputeGreeks ? expectedMove(underlyingPrice, effectiveIv!, dte) : null;
   const emMultiple = emValue != null ? strikeCushion(underlyingPrice, strike, emValue, direction) : null;
-  const cushionScoreValue = emMultiple != null ? cushionScore(emMultiple) : null;
+  const cushionScoreValue = emMultiple != null ? cushionScore(emMultiple, momentumMultiplier) : null;
+  const momentumAdjustment: MomentumAdjustment | null =
+    momentumMultiplier > 1.0 && momentumReason != null ? { multiplier: momentumMultiplier, reason: momentumReason } : null;
 
   const premium = referencePremium({
     bid: contract.bid ?? null,
@@ -210,6 +219,7 @@ function evaluateSide({
     emCushion: emMultiple,
     cushionScore: cushionScoreValue,
     structuralConfirmation: structuralRef ? structuralConfirmation(strike, structuralRef, direction) : null,
+    momentumAdjustment,
     spreadPct: spread?.spreadPct ?? null,
     spreadLabel: spread?.label ?? null,
     skewComponent,
@@ -334,6 +344,16 @@ export async function GET(request: Request, { params }: { params: { ticker: stri
     const relativeStrengthSummary = describeRelativeStrength(relativeStrengthEvaluation, group?.name ?? null);
     const directionalEdge = classifyDirectionalEdge(relativeStrengthEvaluation.suitability);
 
+    // Phase 34 -- momentum-adjusted cushion buffer, calls only. Reuses the
+    // relative-strength evaluation already computed above -- no second
+    // fetch or a parallel scoring path.
+    const callMomentumMultiplier = momentumBufferMultiplier(
+      "call",
+      relativeStrengthEvaluation,
+      relativeStrengthEvaluation.structuralTrend
+    );
+    const callMomentumReason = callMomentumMultiplier > 1.0 ? relativeStrengthSummary : null;
+
     // --- Per-side ---
     const putSide = evaluateSide({
       direction: "put",
@@ -348,6 +368,8 @@ export async function GET(request: Request, { params }: { params: { ticker: stri
       allPutsAtExpiration: putExpirationEntry.puts,
       contracts,
       costBasisIfCall: null,
+      momentumMultiplier: 1.0,
+      momentumReason: null,
     });
 
     const callSide = evaluateSide({
@@ -363,6 +385,8 @@ export async function GET(request: Request, { params }: { params: { ticker: stri
       allPutsAtExpiration: callExpirationEntry.puts,
       contracts,
       costBasisIfCall: costBasis,
+      momentumMultiplier: callMomentumMultiplier,
+      momentumReason: callMomentumReason,
     });
 
     return NextResponse.json({

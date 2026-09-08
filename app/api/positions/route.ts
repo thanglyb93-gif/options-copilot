@@ -16,8 +16,10 @@ import { classifyTrend } from "@/lib/trend";
 import { scenarioAlignment } from "@/lib/scenario-alignment";
 import { gatherBriefingContext, getOrGenerateBriefing } from "@/lib/briefing-service";
 import {
+  APPROACHING_BREACH_PCT,
   assignmentOpportunityCost,
   closeSignal,
+  computeBreachPct,
   findCurrentContract,
   generateProfitHistory,
   itmRiskClassification,
@@ -30,6 +32,7 @@ import {
   MIN_OPEN_POSITIONS_FOR_PORTFOLIO_SUMMARY,
   type PortfolioDeltaPositionInput,
 } from "@/lib/portfolio-analytics";
+import { computePortfolioAverageYield, evaluateEfficiencyFlag } from "@/lib/position-efficiency";
 
 /** Default IV fallback when a position's own contract IV can't be read -- same fallback used for the decay curve. */
 const DEFAULT_IV_FALLBACK = 0.4;
@@ -138,6 +141,20 @@ function computeAnalytics(position: PositionRow, data: TickerData): PositionAnal
       ? currentUnderlyingPrice > position.strike
       : currentUnderlyingPrice < position.strike);
 
+  // Phase 35 -- computed unconditionally (unlike itmResult below, which
+  // only exists once genuinely ITM) so the Roll Calculator can also
+  // surface for a position that's merely APPROACHING breach, not just
+  // one already past it.
+  const breachPct =
+    currentUnderlyingPrice != null
+      ? computeBreachPct(
+          position.strike,
+          currentUnderlyingPrice,
+          position.position_type === "covered_call" ? "call" : "put"
+        )
+      : null;
+  const rollEligible = breachPct != null && breachPct >= APPROACHING_BREACH_PCT;
+
   const itmResult =
     isItm && currentUnderlyingPrice != null
       ? itmRiskClassification(
@@ -204,6 +221,11 @@ function computeAnalytics(position: PositionRow, data: TickerData): PositionAnal
     // Populated separately, only for positions where assignmentOpportunityCost
     // applies -- see computeScenarioAlignment below. This function stays sync.
     scenarioAlignment: null,
+    breachPct,
+    rollEligible,
+    // Populated separately below, from the one portfolio-wide efficiency
+    // query -- this function stays sync and per-position.
+    efficiency: null,
   };
 }
 
@@ -296,12 +318,16 @@ export async function GET(request: Request) {
   const distinctTickers = Array.from(new Set(openRows.map((r) => r.ticker)));
   const needsPortfolioSummary = openRows.length >= MIN_OPEN_POSITIONS_FOR_PORTFOLIO_SUMMARY;
 
-  const [tickerDataEntries, spyQuote] = await Promise.all([
+  const [tickerDataEntries, spyQuote, portfolioAverageYield] = await Promise.all([
     Promise.all(distinctTickers.map(async (ticker) => [ticker, await gatherTickerData(ticker)] as const)),
     // Only fetched when it could actually matter -- below the 2-position
     // threshold a portfolio summary isn't shown at all, so there's no
     // reason to spend an extra Yahoo call on SPY's quote.
     needsPortfolioSummary ? fetchQuote("SPY").catch(() => null) : Promise.resolve(null),
+    // Phase 36 -- one query, covering every logged covered-call row
+    // (any status, every ticker) -- reused below for each open covered-call
+    // position rather than a second per-ticker query.
+    computePortfolioAverageYield(supabase),
   ]);
   const tickerDataByTicker = new Map(tickerDataEntries);
 
@@ -309,6 +335,11 @@ export async function GET(request: Request) {
     rows.map(async (row) => {
       const tickerData = tickerDataByTicker.get(row.ticker);
       let analytics = row.status === "open" && tickerData ? computeAnalytics(row, tickerData) : null;
+
+      if (analytics != null && row.position_type === "covered_call") {
+        const tickerEfficiency = portfolioAverageYield.perTicker.find((e) => e.ticker === row.ticker) ?? null;
+        analytics = { ...analytics, efficiency: evaluateEfficiencyFlag(tickerEfficiency, portfolioAverageYield) };
+      }
 
       // Only pay the extra briefing/trend fetch for positions where the
       // Assignment Opportunity Cost panel is already showing -- scenario
