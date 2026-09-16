@@ -10,7 +10,7 @@
     },
     {
       "path": "/api/check-position-alerts",
-      "schedule": "*/15 13-21 * * 1-5"
+      "schedule": "0 20 * * 1-5"
     }
   ]
 }
