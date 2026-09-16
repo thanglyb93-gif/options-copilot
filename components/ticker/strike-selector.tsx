@@ -7,9 +7,9 @@ import type {
   OptionsResponse,
   PositionsListResponse,
 } from "@/types/api";
-import { formatMonthDay } from "@/lib/format";
 import { guidanceIndicatorById } from "@/lib/guidance-content";
 import { ImportanceBadge } from "@/components/shared/importance-badge";
+import { ExpirationSelect } from "@/components/shared/expiration-select";
 import { referencePremium } from "@/lib/options-math";
 import { SubsectionHeader } from "./section";
 
@@ -179,20 +179,11 @@ export function StrikeSelector({
       <div className="flex flex-col gap-2">
         <SubsectionHeader title="Enter Your Desired Option" />
         <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end sm:gap-4">
-          <label className="flex flex-col gap-1 text-xs text-muted">
-            DTE / Expiration
-            <select
-              value={expirationIndex}
-              onChange={(e) => setExpirationIndex(Number(e.target.value))}
-              className="w-full min-h-11 rounded-md border border-border bg-background px-2 py-1.5 text-sm text-foreground sm:w-auto sm:min-h-0"
-            >
-              {options.expirations.map((exp, i) => (
-                <option key={exp.expirationDate} value={i}>
-                  {exp.dte}d · {formatMonthDay(exp.expirationDate)}
-                </option>
-              ))}
-            </select>
-          </label>
+          <ExpirationSelect
+            expirations={options.expirations}
+            index={expirationIndex}
+            onChange={setExpirationIndex}
+          />
 
           <label className="flex flex-col gap-1 text-xs text-muted">
             Strike

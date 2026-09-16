@@ -255,6 +255,19 @@ export async function fetchTargetExpirationChain(
   };
 }
 
+/**
+ * Just a ticker's list of available expiration dates -- one Yahoo request,
+ * no per-expiration chain fetches. Used to build the Ranking page's
+ * cross-ticker expiration dropdown (Phase 41), where only the dates
+ * themselves are needed, not any contract data.
+ */
+export async function fetchAvailableExpirations(ticker: string): Promise<Date[]> {
+  const base: OptionsResult = await getYahooClient().options(ticker);
+  const now = Date.now();
+  const future = base.expirationDates.filter((d) => d.getTime() >= now);
+  return future.length > 0 ? future : base.expirationDates;
+}
+
 export interface SearchMatch {
   symbol: string;
   name: string;

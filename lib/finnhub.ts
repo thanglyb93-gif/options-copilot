@@ -45,6 +45,44 @@ export interface FinnhubNewsItem {
   url: string;
 }
 
+/**
+ * Finnhub's free tier caps API calls per minute. A single ticker page only
+ * ever fires 1-2 calls at once, so this never mattered until Phase 41's
+ * Ranking view started firing 2 calls/ticker across an entire watchlist
+ * (e.g. 50 calls for a 25-ticker watchlist) within a few seconds, well
+ * past that budget and returning 429s.
+ *
+ * Two layers handle this without serializing every call end-to-end (which
+ * blew the batch out to 100+ seconds when tried): dispatch pacing spaces
+ * out when requests are *sent* (not when they finish, so in-flight latency
+ * overlaps instead of stacking), and a 429-specific retry with backoff
+ * mops up whatever the pacing doesn't prevent -- the real per-minute limit
+ * isn't published precisely, so a reactive safety net is more robust than
+ * guessing a conservative fixed interval.
+ */
+const MIN_DISPATCH_INTERVAL_MS = 250;
+let nextAllowedDispatch = 0;
+let dispatchChain: Promise<void> = Promise.resolve();
+
+function paceDispatch(): Promise<void> {
+  const scheduled = dispatchChain.then(() => {
+    const now = Date.now();
+    const dispatchAt = Math.max(now, nextAllowedDispatch);
+    nextAllowedDispatch = dispatchAt + MIN_DISPATCH_INTERVAL_MS;
+    const waitMs = dispatchAt - now;
+    return waitMs > 0 ? new Promise<void>((resolve) => setTimeout(resolve, waitMs)) : undefined;
+  });
+  dispatchChain = scheduled;
+  return scheduled;
+}
+
+const MAX_429_RETRIES = 4;
+const RETRY_BASE_DELAY_MS = 1500;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export class FinnhubClient {
   private readonly apiKey: string;
 
@@ -65,13 +103,24 @@ export class FinnhubClient {
     }
     url.searchParams.set("token", this.apiKey);
 
-    const response = await fetch(url.toString());
-    if (!response.ok) {
+    for (let attempt = 0; ; attempt++) {
+      await paceDispatch();
+      const response = await fetch(url.toString());
+      if (response.ok) {
+        return response.json() as Promise<T>;
+      }
+      if (response.status === 429 && attempt < MAX_429_RETRIES) {
+        const retryAfterSeconds = Number(response.headers.get("Retry-After"));
+        const delay = Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
+          ? retryAfterSeconds * 1000
+          : RETRY_BASE_DELAY_MS * 2 ** attempt;
+        await sleep(delay);
+        continue;
+      }
       throw new Error(
         `Finnhub request failed: ${response.status} ${response.statusText}`
       );
     }
-    return response.json() as Promise<T>;
   }
 
   async getQuote(symbol: string): Promise<FinnhubQuote> {

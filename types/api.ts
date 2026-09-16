@@ -280,6 +280,54 @@ export interface PositionEfficiencyResult {
 // reflects what was actually just bulk-inserted.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Ranking (Phase 41) -- batch Entry Score across the whole watchlist at
+// a user-chosen target strike distance/expiration. See lib/ranking.ts
+// and app/api/ranking/route.ts.
+// ---------------------------------------------------------------------------
+
+export interface RankingSideResult {
+  score: number;
+  tier: string;
+  strike: number;
+  expirationDate: string;
+  dte: number;
+}
+
+export interface RankingCallSideResult extends RankingSideResult {
+  costBasis: number | null;
+  costBasisMode: "your-position" | "hypothetical";
+}
+
+export interface RankingTickerResult {
+  ticker: string;
+  currentPrice: number | null;
+  put: RankingSideResult | null;
+  putError: string | null;
+  call: RankingCallSideResult | null;
+  callError: string | null;
+}
+
+export interface RankingResponse {
+  targetDte: number;
+  callPctAbove: number;
+  putPctBelow: number;
+  results: RankingTickerResult[];
+  asOf: string;
+}
+
+/** The union of expiration dates across every watchlisted ticker's own chain, for the Ranking page's DTE/Expiration dropdown. See app/api/ranking/expirations/route.ts. */
+export interface RankingExpirationOption {
+  expirationDate: string;
+  dte: number;
+}
+
+export interface RankingExpirationsResponse {
+  expirations: RankingExpirationOption[];
+  /** Index into `expirations` closest to the app's usual 37-day default -- mirrors /api/options's own defaultExpirationIndex convention. */
+  defaultIndex: number;
+}
+
 export interface CsvImportSkippedRow {
   rowNumber: number;
   raw: string[];
