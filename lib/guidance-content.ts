@@ -11,11 +11,18 @@
 import {
   CATALYST_MIN_HEADLINES,
   CATALYST_RECENCY_WINDOW_DAYS,
+  EVENTS_ALIGNMENT_MAX,
+  EVENTS_CATALYST_MAX,
+  EVENTS_WEIGHT,
   HV_FALLBACK_MIN_SAMPLES,
   IV_HISTORY_MIN_ROWS,
   IV_PERCENTILE_BANDS,
+  IV_WEIGHT,
+  RELATIVE_STRENGTH_WEIGHT,
   SKEW_SCORE_BANDS,
   SKEW_UNFAVORABLE_SCORE,
+  SKEW_WEIGHT,
+  TECHNICAL_WEIGHT,
   TIER_BANDS,
 } from "./entry-score";
 import { CUSHION_SCORE_BANDS, MOMENTUM_BUFFER_MULTIPLIER } from "./expected-move";
@@ -93,10 +100,31 @@ function formatBands<T extends { min: number }>(bands: readonly T[], axisLabel: 
   return `Checked top-down, first match wins: ${parts.join(" · ")}.`;
 }
 
-const ivBandsText = formatBands(IV_PERCENTILE_BANDS, "percentile", (b) => `${b.score.toFixed(1)} pts`);
-const cushionBandsText = formatBands(CUSHION_SCORE_BANDS, "EM multiple", (b) => `${b.score.toFixed(1)} pts`);
 const tierBandsText = formatBands(TIER_BANDS, "total (0-10)", (b) => b.tier);
-const skewBandsText = formatBands(SKEW_SCORE_BANDS, "pts of favorable-direction skew", (b) => `${b.score.toFixed(1)} pts`);
+
+/**
+ * Phase 40 -- describes a band array as CONTINUOUS interpolation anchors
+ * (lib/entry-score.ts's interpolateScore) rather than the old top-down
+ * discrete bucketing formatBands describes -- used for the SCORE prose
+ * below. The plain-language LABEL prose (percentileLabelBandsText,
+ * cushionLabelBandsText) still uses formatBands' discrete phrasing,
+ * since labels stay categorical (Phase 28) even though the underlying
+ * score they're labeling is now continuous.
+ */
+function formatAnchors<T extends { min: number; score: number }>(bands: readonly T[], axisLabel: string): string {
+  const finite = [...bands].filter((b) => Number.isFinite(b.min)).sort((a, b) => a.min - b.min);
+  const floorScore = bands.find((b) => !Number.isFinite(b.min))?.score ?? finite[0].score;
+  const anchorList = finite.map((b) => `${b.min} ${axisLabel} → ${b.score.toFixed(1)} pts`).join(" · ");
+  return (
+    `Continuously interpolated on the original 0-2 scale between these anchors: ${anchorList}. ` +
+    `Below ${finite[0].min} ${axisLabel}, flat at ${floorScore.toFixed(1)} pts; at or above ${finite[finite.length - 1].min} ${axisLabel}, capped flat at ${finite[finite.length - 1].score.toFixed(1)} pts -- ` +
+    `a value exactly at one of these thresholds scores exactly what it always did, only the gaps between them are new.`
+  );
+}
+
+const ivBandsText = formatAnchors(IV_PERCENTILE_BANDS, "percentile");
+const cushionBandsText = formatAnchors(CUSHION_SCORE_BANDS, "EM multiple");
+const skewBandsText = formatAnchors(SKEW_SCORE_BANDS, "pts of favorable-direction skew");
 
 /**
  * Phase 28 plain-language label bands -- generated from the exact same
@@ -119,7 +147,7 @@ export const GUIDANCE_INDICATORS: GuidanceIndicator[] = [
     importanceTier: "core",
     whatItMeasures:
       "Where the stock's current implied volatility sits relative to its own trailing history -- how \"rich\" options premiums are right now, specifically for this stock, not the market in general.",
-    howCalculated: `Percentile rank of today's at-the-money implied volatility against real daily IV snapshots collected for this ticker since it was added to the watchlist. Needs ${IV_HISTORY_MIN_ROWS} real snapshot days before it's trusted -- before that, HV Percentile drives the score instead (see below), clearly labeled as an approximation. Feeds the IV component of the Entry Score: ${ivBandsText} As of Phase 28, the same percentile also drives a plain-language label (Rich/Elevated/Average/Below Average/Low), shown next to the number: ${percentileLabelBandsText}`,
+    howCalculated: `Percentile rank of today's at-the-money implied volatility against real daily IV snapshots collected for this ticker since it was added to the watchlist. Needs ${IV_HISTORY_MIN_ROWS} real snapshot days before it's trusted -- before that, HV Percentile drives the score instead (see below), clearly labeled as an approximation. Feeds the IV/HV Percentile component of the Entry Score, weighted ${IV_WEIGHT.toFixed(1)} of the total 10 points (Phase 40, up from an equal 2.0 split): ${ivBandsText} The interpolated 0-2 value is then multiplied by ${IV_WEIGHT.toFixed(1)}/2.0 to reach its final weighted score. As of Phase 28, the same percentile also drives a plain-language label (Rich/Elevated/Average/Below Average/Low), shown next to the number: ${percentileLabelBandsText}`,
     interpretHigh: "Options premiums are unusually rich for this stock right now (labeled \"Rich\" or \"Elevated\") -- more compensation for the risk of selling a covered call or cash-secured put.",
     interpretLow: "Premiums are cheap relative to this stock's own history (labeled \"Below Average\" or \"Low\") -- selling here collects less for the same risk.",
     whereItAppears: "Ticker Overview (Volatility section), Entry Score card (IV Component row), and Dashboard watchlist card (that card's one volatility-percentile slot, once IV Percentile has matured -- HV Percentile fills the same slot before that, see below).",
@@ -131,7 +159,7 @@ export const GUIDANCE_INDICATORS: GuidanceIndicator[] = [
     importanceTier: "core",
     whatItMeasures:
       "Where the stock's realized (historical) 30-day volatility sits relative to its own trailing ~1-year distribution -- a real, independent read on how choppy the stock's actual price action has been, not a stand-in for IV.",
-    howCalculated: `Percentile rank of the current 30-day historical volatility against a rolling series of 30-day HV values, computed purely from daily closes -- available immediately, no waiting period, unlike IV Percentile (which needs ${IV_HISTORY_MIN_ROWS} accumulated calendar days). The rolling series itself needs at least ${HV_FALLBACK_MIN_SAMPLES} samples before it's trusted. Labeled with the same Rich/Elevated/Average/Below Average/Low bands as IV Percentile (Phase 28): ${percentileLabelBandsText}`,
+    howCalculated: `Percentile rank of the current 30-day historical volatility against a rolling series of 30-day HV values, computed purely from daily closes -- available immediately, no waiting period, unlike IV Percentile (which needs ${IV_HISTORY_MIN_ROWS} accumulated calendar days). The rolling series itself needs at least ${HV_FALLBACK_MIN_SAMPLES} samples before it's trusted. Runs through the exact same continuous interpolation and ${IV_WEIGHT.toFixed(1)}-point weighting as IV Percentile when it's the one driving the score (Phase 40). Labeled with the same Rich/Elevated/Average/Below Average/Low bands as IV Percentile (Phase 28): ${percentileLabelBandsText}`,
     interpretHigh: "The stock has been unusually choppy or volatile lately relative to its own recent history (labeled \"Rich\" or \"Elevated\").",
     interpretLow: "Recent price action has been unusually calm for this stock (labeled \"Below Average\" or \"Low\").",
     whereItAppears:
@@ -144,7 +172,7 @@ export const GUIDANCE_INDICATORS: GuidanceIndicator[] = [
     importanceTier: "core",
     whatItMeasures:
       "How far a specific strike sits from the current price, measured in multiples of the stock's expected move to expiration -- the higher the cushion, the more room the stock has to move before that strike is threatened.",
-    howCalculated: `Expected move = price × IV × √(DTE / 365). Cushion = (price − strike) / expected move for a put, (strike − price) / expected move for a call. Banded into the Technical component of the Entry Score: ${cushionBandsText} The same bands also drive a plain-language label (Phase 28), shown next to the multiple: ${cushionLabelBandsText} Phase 34: for a CALL specifically, when the underlying is both classified "outperforming" (lib/relative-strength.ts) and in a healthy higher-highs-higher-lows structure, the bands above are scaled up by ${MOMENTUM_BUFFER_MULTIPLIER}x before a real EM multiple is checked against them -- so a call needs ${MOMENTUM_BUFFER_MULTIPLIER}x the normal cushion distance to earn the same score. This comes from real trade-history analysis showing call losses averaging over 10x larger than put losses, concentrated in exactly this pattern: a strongly trending stock running straight through a strike the plain expected-move math called "safe." Puts are never adjusted -- the analysis found no comparable asymmetry there -- and the expected-move math itself is unchanged; only the score thresholds a call is banded against move. Always shown transparently next to the affected score (never a silent penalty) when active.`,
+    howCalculated: `Expected move = price × IV × √(DTE / 365). Cushion = (price − strike) / expected move for a put, (strike − price) / expected move for a call. Feeds the Technical/EM Cushion component of the Entry Score, weighted ${TECHNICAL_WEIGHT.toFixed(1)} of the total 10 points (Phase 40, up from an equal 2.0 split): ${cushionBandsText} The interpolated 0-2 value is then multiplied by ${TECHNICAL_WEIGHT.toFixed(1)}/2.0 to reach its final weighted score -- applied only when this figure enters the Entry Score's own 0-10 total; the Roll Calculator, Simulated Backtest, and Counterfactual Backtest all show this same EM Cushion figure at its original 0-2 scale, since it means something different in those contexts. The same underlying 0-2 value also drives a plain-language label (Phase 28), shown next to the multiple: ${cushionLabelBandsText} Phase 34: for a CALL specifically, when the underlying is both classified "outperforming" (lib/relative-strength.ts) and in a healthy higher-highs-higher-lows structure, the bands above are scaled up by ${MOMENTUM_BUFFER_MULTIPLIER}x before a real EM multiple is checked against them -- so a call needs ${MOMENTUM_BUFFER_MULTIPLIER}x the normal cushion distance to earn the same score. This comes from real trade-history analysis showing call losses averaging over 10x larger than put losses, concentrated in exactly this pattern: a strongly trending stock running straight through a strike the plain expected-move math called "safe." Puts are never adjusted -- the analysis found no comparable asymmetry there -- and the expected-move math itself is unchanged; only the score thresholds a call is banded against move. Always shown transparently next to the affected score (never a silent penalty) when active.`,
     interpretHigh: "A cushion of 2.0x or more (labeled \"Very Wide\") means the strike sits well outside the stock's statistically expected range -- safer, typically at the cost of lower premium.",
     interpretLow: "A cushion near or below 0 (labeled \"Thin\") means the strike is already at or past the current price relative to the expected move -- meaningfully higher assignment risk. For a call under Phase 34's momentum adjustment, a cushion that would otherwise score well can score lower once the stricter bands apply -- the disclosure next to the score states why.",
     whereItAppears: "Strike Selector results panel (EM Cushion stat), Entry Score card (Technical row, once a strike is selected), and the Covered Call vs. Cash-Secured Put comparison panel (EM Cushion + Structural row, one per side) -- same underlying figure in every case, just labeled for whichever context it's shown in.",
@@ -168,11 +196,14 @@ export const GUIDANCE_INDICATORS: GuidanceIndicator[] = [
     category: "entry",
     importanceTier: "core",
     whatItMeasures:
-      "Two combined reads: whether a market-moving catalyst is imminent or recent (earnings, elevated headline volume), and whether the AI-synthesized directional lean from recent news supports or opposes the specific trade direction under consideration.",
-    howCalculated: `Catalyst score (0 or 1 pt): 1 if earnings occurred within the last ${CATALYST_RECENCY_WINDOW_DAYS} days, or if ${CATALYST_MIN_HEADLINES}+ recent company headlines exist absent that; else 0. Alignment score (0, 0.5, or 1 pt): 1 if the news-derived directional lean favors the trade direction or is neutral, 0.5 if the lean is genuinely mixed, 0 (and explicitly flagged as opposing) if the lean actively works against the trade.`,
+      "Two combined, continuous reads: how recent/imminent a market-moving catalyst is (earnings, or elevated headline volume), and whether the AI-synthesized directional lean from recent news supports or opposes the specific trade direction under consideration. Weighted " +
+      `${EVENTS_WEIGHT.toFixed(1)} of the Entry Score's total 10 points (Phase 40, down from an equal 2.0 split), split into two sub-scores that sum to that same ${EVENTS_WEIGHT.toFixed(1)}-point budget directly -- unlike the other four components, Events isn't rescaled a second time, since its sub-scores are already sized to their final weighted range.`,
+    howCalculated:
+      `Catalyst recency (0-${EVENTS_CATALYST_MAX.toFixed(1)} pts, mechanical, no LLM call): a smooth decay from the nearest relevant catalyst, replacing the old binary "within ${CATALYST_RECENCY_WINDOW_DAYS} days = full credit." Two signals, whichever is stronger: ${EVENTS_CATALYST_MAX.toFixed(1)} × max(0, 1 − daysSinceLastEarnings / ${CATALYST_RECENCY_WINDOW_DAYS}) for earnings recency, and ${EVENTS_CATALYST_MAX.toFixed(1)} × min(1, recentHeadlineCount / ${CATALYST_MIN_HEADLINES}) for a ramping headline-volume signal (both reuse the exact same ${CATALYST_RECENCY_WINDOW_DAYS}-day window and ${CATALYST_MIN_HEADLINES}-headline threshold the old binary check used). No catalyst in range scores exactly 0, not a missing/null state. ` +
+      `Directional alignment (0-${EVENTS_ALIGNMENT_MAX.toFixed(1)} pts, the existing LLM-derived lean, kept exactly as before): ${EVENTS_ALIGNMENT_MAX.toFixed(1)} if the lean favors the trade direction or is neutral, ${(EVENTS_ALIGNMENT_MAX * 0.5).toFixed(1)} if genuinely mixed, 0 (and explicitly flagged as opposing, via a separate prominent warning banner that fires regardless of this score) if the lean actively works against the trade.`,
     interpretHigh: "No imminent surprise catalyst working against the position, and the news-derived lean supports (or doesn't oppose) the trade direction.",
     interpretLow: "A directional lean flagged as opposing the trade means the evidence actively argues against selling this specific direction right now -- worth a second look before proceeding.",
-    whereItAppears: "Entry Score card (Events row) and the ticker's Market Read section (the \"Net read\" conclusion is the same underlying directional lean).",
+    whereItAppears: "Entry Score card (Events row, showing both sub-scores) and the ticker's Market Read section (the \"Net read\" conclusion is the same underlying directional lean).",
   },
   {
     id: "assignment-probability",
@@ -293,7 +324,7 @@ export const GUIDANCE_INDICATORS: GuidanceIndicator[] = [
     importanceTier: "core",
     whatItMeasures:
       "Whether downside puts or upside calls are priced richer in implied volatility at the front-month expiration -- a read on which direction the options market is paying up to protect against or speculate on, independent of the overall IV level. Direction-aware Entry Score input as of Phase 24: skew that pays you more for the exact risk your trade takes on (put-skewed for a put sale, call-skewed for a call sale) scores higher; skew working against your trade direction scores 0.",
-    howCalculated: `Compares the ~25-delta put's IV against the ~25-delta call's IV (closest available |delta| to 0.25 on each side) at the front-month expiration, using deltas already computed via Black-Scholes. Skew = put IV − call IV, classified: > ${(SKEW_FLAT_THRESHOLD * 100).toFixed(0)} pts → put-skewed · < -${(SKEW_FLAT_THRESHOLD * 100).toFixed(0)} pts → call-skewed · otherwise → flat. Returns no reading at all on a thin chain with no real ~25-delta contract on one side, rather than a misleading number -- the Skew component of the Entry Score is then null with a note, not a fabricated score. When the skew leans favorable for the trade direction, banded by magnitude: ${skewBandsText} Flat skew scores the bottom band (0.5) regardless of direction; skew leaning against the trade direction scores ${SKEW_UNFAVORABLE_SCORE}.`,
+    howCalculated: `Compares the ~25-delta put's IV against the ~25-delta call's IV (closest available |delta| to 0.25 on each side) at the front-month expiration, using deltas already computed via Black-Scholes. Skew = put IV − call IV, classified: > ${(SKEW_FLAT_THRESHOLD * 100).toFixed(0)} pts → put-skewed · < -${(SKEW_FLAT_THRESHOLD * 100).toFixed(0)} pts → call-skewed · otherwise → flat. Returns no reading at all on a thin chain with no real ~25-delta contract on one side, rather than a misleading number -- the Skew component of the Entry Score is then null with a note, not a fabricated score. Weighted ${SKEW_WEIGHT.toFixed(1)} of the Entry Score's total 10 points -- unchanged by Phase 40's reweighting, though the value itself is now continuous rather than banded. When the skew leans favorable for the trade direction, continuously interpolated by magnitude: ${skewBandsText} Flat skew scores the bottom anchor (0.5) regardless of direction; skew leaning against the trade direction scores ${SKEW_UNFAVORABLE_SCORE}.`,
     interpretHigh: "Put-skewed -- downside protection is priced richer than upside, the normal/common shape, consistent with hedging demand. Favorable (higher-scoring) for a put sale, unfavorable for a call sale.",
     interpretLow: "Call-skewed -- upside calls are priced richer than downside puts, less common, consistent with speculative or FOMO-driven demand. Favorable for a call sale, unfavorable for a put sale.",
     whereItAppears: "Ticker Overview (Volatility section, informational) and Entry Score card (Skew row, scored and direction-aware).",
@@ -305,7 +336,7 @@ export const GUIDANCE_INDICATORS: GuidanceIndicator[] = [
     importanceTier: "core",
     whatItMeasures:
       "How a stock's actual price performance compares to the broad market (SPY) and, when a peer group is defined, to its sector peers -- plus a longer-horizon structural read on its price shape. Built as the direct fix for a real mistake (an OKLO assignment that turned into a loss) where a stock was traded on tactical merits alone without ever checking whether it was fundamentally sound relative to its peers. Ticker-level Entry Score input as of Phase 24, same category as IV Percentile and Events -- identical for the Put and Call score for a given ticker.",
-    howCalculated: `Primary window: total return over the trailing ${PRIMARY_LOOKBACK_DAYS} days ("6 months"). vsMarket = ticker return − SPY return. vsSector = ticker return − average return of its defined peer basket (lib/sector-groups.ts) -- null, not fabricated, for a ticker with no defined group. Structural trend: swing-high/swing-low pattern over a separate, longer trailing ${STRUCTURAL_TREND_LOOKBACK_DAYS}-day window, classified higher-highs-higher-lows (healthy), lower-highs-lower-lows (deteriorating), or mixed. Scored: both vsMarket and vsSector clearly positive (> ${SUITABILITY_OUTPERFORM_THRESHOLD_PCT} pts) with healthy structure → 2.0 · both clearly negative (< ${SUITABILITY_UNDERPERFORM_THRESHOLD_PCT} pts) with deteriorating structure → 0 · either clearly negative → 0.5 · at least one clearly positive with structure not deteriorating → 1.5 · otherwise (roughly inline, or a positive read undercut by deteriorating structure) → 1.0. A missing sector comparison is treated as neutral, not positive -- it can't by itself unlock the top band.`,
+    howCalculated: `Primary window: total return over the trailing ${PRIMARY_LOOKBACK_DAYS} days ("6 months"). vsMarket = ticker return − SPY return. vsSector = ticker return − average return of its defined peer basket (lib/sector-groups.ts) -- null, not fabricated, for a ticker with no defined group. Structural trend: swing-high/swing-low pattern over a separate, longer trailing ${STRUCTURAL_TREND_LOOKBACK_DAYS}-day window, classified higher-highs-higher-lows (healthy), lower-highs-lower-lows (deteriorating), or mixed. Weighted ${RELATIVE_STRENGTH_WEIGHT.toFixed(1)} of the Entry Score's total 10 points (Phase 40, down from an equal 2.0 split). Scored continuously (Phase 40) rather than as a 5-step decision tree: vsMarket and vsSector (when defined) are each linearly interpolated between the SAME thresholds the old classification used (${SUITABILITY_UNDERPERFORM_THRESHOLD_PCT} pts → 0, ${SUITABILITY_OUTPERFORM_THRESHOLD_PCT} pts → 2.0, capped/floored beyond), and structural trend contributes as a third axis on that identical 0-2 scale (healthy → 2.0, deteriorating → 0, mixed → 1.0) since it has no numeric magnitude of its own to interpolate along. The axes are averaged (a missing sector axis is excluded from the average, not fabricated as neutral -- it can't silently drag the score toward the middle) and the 0-2 result is multiplied by ${RELATIVE_STRENGTH_WEIGHT.toFixed(1)}/2.0. This reproduces the old tree's key reference points (all axes strongly positive/healthy → the top score; all strongly negative/deteriorating → the bottom) while making every value in between continuous.`,
     interpretHigh: "The stock has genuinely outpaced both the market and its own peers over a real 6-month window, with a healthy higher-highs-higher-lows price structure -- the fundamental-soundness check this component exists to force before a trade, not just a tactical entry signal.",
     interpretLow: "The stock has lagged the market and/or its peers with a deteriorating price structure -- exactly the pattern the OKLO mistake missed by evaluating a trade on tactical merits alone.",
     whereItAppears: "Screener page (full breakdown, before a ticker is even added to the watchlist) and Entry Score card (Relative Strength row).",
@@ -341,8 +372,8 @@ export const GUIDANCE_INDICATORS: GuidanceIndicator[] = [
     category: "entry",
     importanceTier: "core",
     whatItMeasures:
-      "The single combined 0-10 recommendation for a specific ticker, direction, and (once picked) strike -- the one number every other entry-time indicator here feeds into. Expanded from a 0-6, 3-component score to 0-10 across 5 components in Phase 24, promoting Volatility Skew from informational-only to scored and adding Relative Strength.",
-    howCalculated: `Ticker-level partial (0-8, strike-independent) = IV component (0-2) + Events catalyst score (0-1) + Events alignment score (0-1) + Skew (0-2) + Relative Strength (0-2). Completed to the full 0-10 once a strike is selected, by adding that contract's Technical/EM Cushion score (0-2). The total maps to a tier label: ${tierBandsText}`,
+      "The single combined 0-10 recommendation for a specific ticker, direction, and (once picked) strike -- the one number every other entry-time indicator here feeds into. Expanded from a 0-6, 3-component score to 0-10 across 5 components in Phase 24, promoting Volatility Skew from informational-only to scored and adding Relative Strength. Phase 40 replaced the original equal 2.0-points-each split with weights reflecting how much each component actually matters, and switched every component from discrete-banded to continuously interpolated scoring -- the total range and tier boundaries are unchanged.",
+    howCalculated: `Ticker-level partial (0-${(IV_WEIGHT + EVENTS_WEIGHT + SKEW_WEIGHT + RELATIVE_STRENGTH_WEIGHT).toFixed(1)}, strike-independent) = IV/HV Percentile (0-${IV_WEIGHT.toFixed(1)}) + Events (0-${EVENTS_WEIGHT.toFixed(1)}, split into a 0-${EVENTS_CATALYST_MAX.toFixed(1)} catalyst-recency sub-score and a 0-${EVENTS_ALIGNMENT_MAX.toFixed(1)} directional-alignment sub-score) + Skew (0-${SKEW_WEIGHT.toFixed(1)}) + Relative Strength (0-${RELATIVE_STRENGTH_WEIGHT.toFixed(1)}). Completed to the full 0-10 once a strike is selected, by adding that contract's Technical/EM Cushion score (0-${TECHNICAL_WEIGHT.toFixed(1)}). Every component except Events is scored by linearly interpolating the raw metric (IV percentile, EM-cushion multiple, skew points, relative-strength axes) between its existing threshold anchors on their original 0-2 scale, then multiplying by that component's weight/2.0 -- see each component's own entry above for its specific anchors. Displayed component scores round to 1 decimal place, so values like 2.1 or 1.7 are normal, not just 0.5 steps. The total maps to a tier label, unchanged since Phase 24: ${tierBandsText}`,
     interpretHigh: "A SELL tier means the combined evidence -- volatility pricing, catalyst/directional risk, and strike cushion -- favors selling premium here.",
     interpretLow: "A DON'T SELL or CONSIDER SKIPPING tier means the combined evidence doesn't support this specific trade right now, even if one individual component looks fine in isolation.",
     whereItAppears: "Entry Score cards (Put Score / Call Score, the large number and tier badge at the top of each card).",

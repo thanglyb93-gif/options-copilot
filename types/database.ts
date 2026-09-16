@@ -119,6 +119,20 @@ export type EventAnnotationRow = {
   classification: string | null;
 };
 
+/**
+ * Phase 39 -- one row per alert email actually sent. The unique
+ * (ticker, headline_hash) constraint is what prevents a duplicate send
+ * across polling runs; MAX(sent_at) per ticker also doubles as that
+ * ticker's last-checked-at watermark, so there's no separate settings
+ * table. See lib/position-alerts.ts.
+ */
+export type AlertLogRow = {
+  id: string;
+  ticker: string;
+  headline_hash: string;
+  sent_at: string;
+};
+
 export interface Database {
   public: {
     Tables: {
@@ -203,6 +217,12 @@ export interface Database {
         Insert: Partial<Pick<EventAnnotationRow, "id" | "pct_change" | "headline" | "source" | "classification">> &
           Pick<EventAnnotationRow, "ticker" | "date" | "type">;
         Update: Partial<EventAnnotationRow>;
+        Relationships: [];
+      };
+      alert_log: {
+        Row: AlertLogRow;
+        Insert: Partial<Pick<AlertLogRow, "id" | "sent_at">> & Pick<AlertLogRow, "ticker" | "headline_hash">;
+        Update: Partial<AlertLogRow>;
         Relationships: [];
       };
     };

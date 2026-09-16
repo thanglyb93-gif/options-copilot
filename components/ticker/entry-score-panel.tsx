@@ -1,7 +1,18 @@
 "use client";
 
 import type { FetchState } from "@/lib/use-json-fetch";
-import { combineWithStrikeCushion } from "@/lib/entry-score";
+import {
+  combineWithStrikeCushion,
+  EVENTS_ALIGNMENT_MAX,
+  EVENTS_CATALYST_MAX,
+  EVENTS_WEIGHT,
+  IV_WEIGHT,
+  RELATIVE_STRENGTH_WEIGHT,
+  round1,
+  SKEW_WEIGHT,
+  TECHNICAL_SCALE,
+  TECHNICAL_WEIGHT,
+} from "@/lib/entry-score";
 import { formatOrdinal } from "@/lib/format";
 import { guidanceIndicatorById } from "@/lib/guidance-content";
 import { cushionLabel, percentileLabel, skewLeanLabel } from "@/lib/indicator-labels";
@@ -80,7 +91,7 @@ function IvComponentDetail({ iv }: { iv: IvComponentResult }) {
   return (
     <div className="flex flex-col items-end gap-1">
       <span className="font-mono text-foreground">
-        {iv.score != null ? iv.score.toFixed(1) : "—"}
+        {iv.score != null ? `${iv.score.toFixed(1)} / ${IV_WEIGHT.toFixed(1)}` : "—"}
         {iv.score != null && (
           <span className="ml-1 text-xs font-normal text-muted">
             (based on {iv.isApproximation ? "HV" : "IV"} Percentile)
@@ -107,9 +118,30 @@ function SkewDetail({ skew }: { skew: SkewComponentResult }) {
   const lean = skew.skew?.lean ?? "flat";
   return (
     <span className="flex items-center justify-end gap-1.5">
-      {skew.score.toFixed(1)} ({pts}pt)
+      {skew.score.toFixed(1)} / {SKEW_WEIGHT.toFixed(1)} ({pts}pt)
       <IndicatorLabel text={skewLeanLabel(lean)} />
     </span>
+  );
+}
+
+/**
+ * Phase 40 -- Events' two continuous sub-scores (catalyst recency,
+ * mechanical; directional alignment, the LLM-derived lean) shown
+ * separately rather than only as their sum, so the breakdown driving
+ * the total is never hidden.
+ */
+function EventsDetail({ events }: { events: EntryScoreResponse["eventComponent"] }) {
+  const total = round1(events.catalystScore + events.alignmentScore);
+  return (
+    <div className="flex flex-col items-end gap-0.5">
+      <span className="font-mono text-foreground">
+        {total.toFixed(1)} / {EVENTS_WEIGHT.toFixed(1)}
+      </span>
+      <span className="text-xs text-muted">
+        catalyst recency {events.catalystScore.toFixed(1)}/{EVENTS_CATALYST_MAX.toFixed(1)}, directional alignment{" "}
+        {events.alignmentScore.toFixed(1)}/{EVENTS_ALIGNMENT_MAX.toFixed(1)} (lean: {events.lean})
+      </span>
+    </div>
   );
 }
 
@@ -127,7 +159,7 @@ function relativeStrengthDetail(rs: RelativeStrengthComponentResult): string {
         ? "deteriorating structure"
         : "mixed structure";
   const parts = [marketPart, sectorPart, structurePart].filter((p): p is string => p != null);
-  return `${rs.score.toFixed(1)} (${parts.join(", ")})`;
+  return `${rs.score.toFixed(1)} / ${RELATIVE_STRENGTH_WEIGHT.toFixed(1)} (${parts.join(", ")})`;
 }
 
 function TechnicalDetail({ matchedSelection }: { matchedSelection: StrikeSelection | null }) {
@@ -139,9 +171,15 @@ function TechnicalDetail({ matchedSelection }: { matchedSelection: StrikeSelecti
   const structural = contract.structuralConfirmation?.confirmed
     ? `, ${matchedSelection.direction === "put" ? "below" : "above"} ${contract.structuralConfirmation.referenceLabel}`
     : "";
+  // contract.cushionScore is lib/expected-move.ts's raw 0-2 cushionScore
+  // (shared with Roll Calculator/Simulated Backtest/Counterfactual
+  // Backtest at that same scale) -- weighted to the Entry Score's own
+  // Technical/EM Cushion range (2.5) only here, at display time,
+  // identically to how combineWithStrikeCushion weights it for the total.
+  const weighted = Math.round(contract.cushionScore * TECHNICAL_SCALE * 10) / 10;
   return (
     <span className="flex items-center justify-end gap-1.5">
-      {contract.cushionScore.toFixed(1)} ({emText}
+      {weighted.toFixed(1)} / {TECHNICAL_WEIGHT.toFixed(1)} ({emText}
       {structural})
       {contract.emCushion != null && <IndicatorLabel text={cushionLabel(contract.emCushion)} />}
     </span>
@@ -228,9 +266,7 @@ function EntryScoreCard({
             />
             <ComponentRow
               label="Events"
-              detail={`${(data.eventComponent.catalystScore + data.eventComponent.alignmentScore).toFixed(1)} (catalyst: ${
-                data.eventComponent.catalystScore > 0 ? "yes" : "no"
-              }, lean: ${data.eventComponent.lean})`}
+              detail={<EventsDetail events={data.eventComponent} />}
               indicatorId="events"
             />
             <ComponentRow label="Skew" detail={<SkewDetail skew={data.skewComponent} />} indicatorId="volatility-skew" />

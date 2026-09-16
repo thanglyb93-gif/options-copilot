@@ -362,6 +362,41 @@ export interface CounterfactualBacktestResponse {
   asOf: string;
 }
 
+// ---------------------------------------------------------------------------
+// Position news alerts (Phase 39) -- see lib/position-alerts.ts and
+// app/api/check-position-alerts/route.ts. Wires the existing Finnhub
+// fetch + Phase 16 classifier + Resend integration together for actual
+// position monitoring rather than a new pipeline.
+// ---------------------------------------------------------------------------
+
+export interface PositionAlertCheckResult {
+  ticker: string;
+  matchesFound: number;
+  alertsSent: number;
+  duplicatesSkipped: number;
+  error?: string;
+}
+
+export interface CheckPositionAlertsResponse {
+  ranAt: string;
+  withinMarketHours: boolean;
+  forced: boolean;
+  skipped: boolean;
+  results: PositionAlertCheckResult[];
+  totalAlertsSent: number;
+}
+
+export interface AlertLogEntry {
+  id: string;
+  ticker: string;
+  headlineHash: string;
+  sentAt: string;
+}
+
+export interface AlertLogResponse {
+  alerts: AlertLogEntry[];
+}
+
 export interface CsvImportResponse {
   totalRowsParsed: number;
   skippedRows: CsvImportSkippedRow[];

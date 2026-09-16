@@ -64,3 +64,67 @@ export async function sendIvSnapshotFailureAlert(
     );
   }
 }
+
+// ---------------------------------------------------------------------------
+// Phase 39 -- position news alerts. Same client/timeout/from-address
+// pattern as sendIvSnapshotFailureAlert above, not a new integration --
+// the one difference is this returns the outcome (including Resend's
+// real message id on success) instead of swallowing it, since the
+// caller (the /api/check-position-alerts route) needs to know whether
+// to record the send in alert_log.
+// ---------------------------------------------------------------------------
+
+export interface PositionAlertEmailInput {
+  ticker: string;
+  headline: string;
+  source: string;
+  categoryLabel: string;
+  publishedAt: string;
+  /** Absolute URL to this ticker's page in the app. */
+  tickerUrl: string;
+}
+
+export interface PositionAlertEmailResult {
+  sent: boolean;
+  /** Resend's real message id -- only present on a genuine successful send. */
+  emailId?: string;
+  error?: string;
+}
+
+export async function sendPositionAlertEmail(input: PositionAlertEmailInput): Promise<PositionAlertEmailResult> {
+  const apiKey = process.env.RESEND_API_KEY;
+  const to = process.env.ALERT_EMAIL;
+
+  if (!apiKey || !to) {
+    return { sent: false, error: "RESEND_API_KEY or ALERT_EMAIL is not configured" };
+  }
+
+  try {
+    const resend = new Resend(apiKey);
+    const { data, error } = await Promise.race([
+      resend.emails.send({
+        from: "options-copilot <onboarding@resend.dev>",
+        to,
+        subject: `options-copilot: ${input.ticker} -- ${input.categoryLabel} news`,
+        text: [
+          `New ${input.categoryLabel} headline for ${input.ticker}, a position you currently hold:`,
+          "",
+          `"${input.headline}"`,
+          `Source: ${input.source}`,
+          `Published: ${input.publishedAt}`,
+          "",
+          `View ${input.ticker}: ${input.tickerUrl}`,
+        ].join("\n"),
+      }),
+      timeout(SEND_TIMEOUT_MS),
+    ]);
+
+    if (error) return { sent: false, error: error.message };
+    if (!data) return { sent: false, error: "Resend returned no data and no error" };
+    return { sent: true, emailId: data.id };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    console.error(`Failed to send position alert email for ${input.ticker}:`, message);
+    return { sent: false, error: message };
+  }
+}

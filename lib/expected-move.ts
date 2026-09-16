@@ -3,7 +3,7 @@
  * calls.
  */
 
-import type { TradeDirection } from "./entry-score";
+import { interpolateScore, type TradeDirection } from "./entry-score";
 import type { StructuralTrend, Suitability } from "./relative-strength";
 
 /** One-standard-deviation expected move to expiration, in price terms. */
@@ -42,16 +42,26 @@ export const CUSHION_SCORE_BANDS = [
 ] as const;
 
 /**
- * Cushion score, optionally requiring a larger real EM multiple to reach
- * the same tier -- see momentumBufferMultiplier below. `momentumMultiplier`
- * defaults to 1.0 (no change) so every existing caller is unaffected
- * unless it explicitly opts in.
+ * Cushion score, continuously interpolated between CUSHION_SCORE_BANDS'
+ * anchors (Phase 40 -- see lib/entry-score.ts's interpolateScore) rather
+ * than banded into a discrete bucket, optionally requiring a larger
+ * real EM multiple to reach the same score -- see momentumBufferMultiplier
+ * below. `momentumMultiplier` defaults to 1.0 (no change) so every
+ * existing caller is unaffected unless it explicitly opts in; when it's
+ * not 1.0, each anchor's threshold (not its score) is scaled before
+ * interpolating, exactly mirroring the old discrete-banding behavior.
+ * Stays on its original 0-2 scale here -- lib/entry-score.ts's
+ * combineWithStrikeCushion is what scales this to the Entry Score's
+ * Technical/EM Cushion weight (2.5) for that specific 0-10 total; this
+ * function's other callers (Roll Calculator, Simulated Backtest,
+ * Counterfactual Backtest) use the unscaled 0-2 value directly.
  */
 export function cushionScore(emMultiple: number, momentumMultiplier = 1.0): number {
-  for (const band of CUSHION_SCORE_BANDS) {
-    if (emMultiple >= band.min * momentumMultiplier) return band.score;
-  }
-  return 0;
+  const scaledAnchors = CUSHION_SCORE_BANDS.map((b) => ({
+    min: Number.isFinite(b.min) ? b.min * momentumMultiplier : b.min,
+    score: b.score,
+  }));
+  return interpolateScore(emMultiple, scaledAnchors);
 }
 
 // ---------------------------------------------------------------------------
