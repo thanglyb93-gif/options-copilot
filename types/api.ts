@@ -302,6 +302,8 @@ export interface RankingCallSideResult extends RankingSideResult {
 export interface RankingTickerResult {
   ticker: string;
   currentPrice: number | null;
+  /** ISO timestamp of this ticker's cached briefing, or null if none is cached -- Phase 42's Ranking page reads this cache-only and never generates one itself. */
+  briefingGeneratedAt: string | null;
   put: RankingSideResult | null;
   putError: string | null;
   call: RankingCallSideResult | null;
@@ -588,11 +590,28 @@ export interface BriefingContent {
   analystActions: AnalystAction[];
 }
 
+/** Phase 43 Part C -- the no-new-API-call fallback shown when generation is capped or fails; see lib/briefing-service.ts's getBriefingRespectingDailyCap. */
+export interface StructuredFactsFallback {
+  /** Mechanical (non-LLM) Events sub-score, from data already gathered -- see lib/entry-score.ts's catalystRecencyScore. */
+  catalystRecencyScore: number;
+  /** A prior real generation's lean, however stale -- null only when none has ever been cached for this ticker. */
+  cachedLean: { lean: DirectionalLean; rationale: string; generatedAt: string } | null;
+}
+
+export interface DailyGenerationStatus {
+  count: number;
+  cap: number;
+  capHit: boolean;
+}
+
 export interface BriefingResponse {
   ticker: string;
-  content: BriefingContent;
-  generatedAt: string;
-  cached: boolean;
+  mode: "fresh-cache" | "generated" | "capped" | "failed";
+  /** Null only in "capped"/"failed" mode -- see fallback instead. */
+  content: BriefingContent | null;
+  generatedAt: string | null;
+  fallback: StructuredFactsFallback | null;
+  dailyStatus: DailyGenerationStatus;
 }
 
 export type HeadlineLevel = "macro" | "individual";
@@ -615,11 +634,14 @@ export interface ClassifiedNewsHeadline extends NewsHeadline {
   id: string;
   level: HeadlineLevel;
   category: HeadlineCategory;
+  /** False when classification failed (Anthropic error) and level/category are just a neutral fallback, not a real classification -- the UI renders these plainly, with no category tag. */
+  classified: boolean;
 }
 
 export interface TodaysSummaryResponse {
-  content: BriefingContent;
-  generatedAt: string;
+  /** Null when generation failed (Anthropic error) -- headlines below are still real and unaffected. */
+  content: BriefingContent | null;
+  generatedAt: string | null;
   cached: boolean;
   /** All fetched headlines, classified, most-recent-first. */
   headlines: ClassifiedNewsHeadline[];

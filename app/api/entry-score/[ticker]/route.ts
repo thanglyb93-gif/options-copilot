@@ -11,7 +11,8 @@ import {
   volatilitySkew,
   type SkewChainContract,
 } from "@/lib/volatility";
-import { gatherBriefingContext, getOrGenerateBriefing } from "@/lib/briefing-service";
+import { gatherBriefingContext, getBriefingRespectingDailyCap } from "@/lib/briefing-service";
+import type { DirectionalLean } from "@/lib/briefing";
 import { peerTickersFor, sectorGroupForTicker } from "@/lib/sector-groups";
 import {
   evaluateRelativeStrength,
@@ -81,9 +82,26 @@ export async function GET(
       ),
     ]);
 
-    const { inputs, daysSinceLastEarnings, recentHeadlineCount, closes } = context;
+    const { daysSinceLastEarnings, recentHeadlineCount, closes } = context;
 
-    const { content: briefing } = await getOrGenerateBriefing(supabase, ticker, inputs, false);
+    // Goes through the same daily-cap-aware decision point Market Read
+    // uses (Phase 43 Part C), so the global cap can't be bypassed just
+    // by loading a ticker page instead of clicking Refresh. A stale
+    // cached lean (capped/failed with fallback.cachedLean present) is
+    // still used for scoring -- same "use whatever's cached regardless
+    // of age" philosophy as Ranking's Phase 42 cache-only path -- and
+    // only a ticker with NO lean ever cached scores directional
+    // alignment as fully absent (0, not opposing).
+    const outcome = await getBriefingRespectingDailyCap(supabase, ticker, context, false);
+    let lean: DirectionalLean | null = null;
+    let rationale: string | null = null;
+    if (outcome.fallback) {
+      lean = outcome.fallback.cachedLean?.lean ?? null;
+      rationale = outcome.fallback.cachedLean?.rationale ?? null;
+    } else {
+      lean = outcome.content.directionalLean.lean;
+      rationale = outcome.content.directionalLean.rationale;
+    }
 
     const reliableCalls = targetChain.calls.filter((c) => !unreliableIvFlag(c));
     const reliablePuts = targetChain.puts.filter((p) => !unreliableIvFlag(p));
@@ -144,8 +162,8 @@ export async function GET(
       direction as TradeDirection,
       { currentIv, historicalValues, hvFallback },
       {
-        lean: briefing.directionalLean.lean,
-        rationale: briefing.directionalLean.rationale,
+        lean,
+        rationale,
         daysSinceLastEarnings,
         recentHeadlineCount,
       },
@@ -155,11 +173,20 @@ export async function GET(
 
     // Phase 33 -- a separate, parallel signal attached to the score
     // display; never folded into `result`'s own scoring math above.
-    const timingCaution = await evaluateTimingCaution(supabase, ticker, direction as TradeDirection, {
-      historicals: tickerCloses,
-      currentIv,
-      ivHistory: ivHistoryWithDates,
-    });
+    // Its catalyst lookup can itself hit headline classification (an
+    // Anthropic call) -- a failure there must not take down the score
+    // either, so this degrades to "no caution to show" rather than
+    // throwing.
+    let timingCaution: Awaited<ReturnType<typeof evaluateTimingCaution>> = { active: false, reasoning: [] };
+    try {
+      timingCaution = await evaluateTimingCaution(supabase, ticker, direction as TradeDirection, {
+        historicals: tickerCloses,
+        currentIv,
+        ivHistory: ivHistoryWithDates,
+      });
+    } catch (error) {
+      console.error(`Timing caution evaluation failed for ${ticker}:`, error);
+    }
 
     return NextResponse.json({
       ticker,
@@ -169,8 +196,9 @@ export async function GET(
       asOf: new Date().toISOString(),
     });
   } catch (error) {
+    console.error(`Entry score failed for ${ticker}:`, error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Unknown error" },
+      { error: "Couldn't compute a score for this ticker right now." },
       { status: 502 }
     );
   }

@@ -42,20 +42,33 @@ export async function generateStructuredOutput(
 ): Promise<unknown> {
   const client = getAnthropicClient();
 
-  const response = await client.messages.create({
-    model: request.model ?? DEFAULT_MODEL,
-    max_tokens: request.maxTokens ?? 1536,
-    system: request.systemPrompt,
-    tools: [
-      {
-        name: request.toolName,
-        description: request.toolDescription,
-        input_schema: request.inputSchema,
-      },
-    ],
-    tool_choice: { type: "tool", name: request.toolName },
-    messages: [{ role: "user", content: request.userPrompt }],
-  });
+  let response: Anthropic.Message;
+  try {
+    response = await client.messages.create({
+      model: request.model ?? DEFAULT_MODEL,
+      max_tokens: request.maxTokens ?? 1536,
+      system: request.systemPrompt,
+      tools: [
+        {
+          name: request.toolName,
+          description: request.toolDescription,
+          input_schema: request.inputSchema,
+        },
+      ],
+      tool_choice: { type: "tool", name: request.toolName },
+      messages: [{ role: "user", content: request.userPrompt }],
+    });
+  } catch (error) {
+    // The Anthropic SDK's own error message is often the raw HTTP status
+    // + response body (e.g. `400 {"type":"error","error":{"message":
+    // "Your credit balance is too low..."}}`) -- fine to log, never fine
+    // to let reach a UI verbatim. Every caller in this codebase (briefing
+    // generation, headline classification, Today's Summary) goes through
+    // this one function, so cleaning the message here is what guarantees
+    // none of them can leak it, even one that forgets to handle it itself.
+    console.error(`Anthropic request failed (tool: ${request.toolName}):`, error);
+    throw new Error("Anthropic request failed.");
+  }
 
   const toolUse = response.content.find(
     (block): block is Anthropic.ToolUseBlock => block.type === "tool_use"

@@ -75,7 +75,20 @@ export async function getOrClassifyHeadlines(
   if (uncached.length === 0) return result;
 
   for (const batch of chunk(uncached, HEADLINE_CLASSIFICATION_BATCH_SIZE)) {
-    const classified = await classifyHeadlines(batch);
+    let classified: Map<string, HeadlineClassification>;
+    try {
+      classified = await classifyHeadlines(batch);
+    } catch (error) {
+      // An Anthropic failure (credits, rate limit, network) must not
+      // break the whole caller -- every consumer of this function
+      // (active catalysts, Today's Summary, News page, position alerts)
+      // already treats a headline missing from the returned map as
+      // "not classified" gracefully, so skipping this batch entirely is
+      // enough; it'll simply be re-attempted on the next load, same as
+      // an entry dropped by response validation below.
+      console.error(`Headline classification batch of ${batch.length} failed:`, error);
+      continue;
+    }
     const rows: Database["public"]["Tables"]["headline_classifications"]["Insert"][] = [];
 
     for (const h of batch) {

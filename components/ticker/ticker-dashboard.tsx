@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useJsonFetch } from "@/lib/use-json-fetch";
+import { useBriefing } from "@/lib/use-briefing";
 import type {
   EarningsResponse,
   EntryScoreResponse,
@@ -34,6 +35,10 @@ export function TickerDashboard({ symbol }: { symbol: string }) {
   // reusing its route (not a second computation) is what guarantees the
   // Overview's new line can never disagree with the Screener's.
   const screener = useJsonFetch<ScreenerResponse>(`/api/screener/${symbol}`);
+  // Shared by QuoteHeader's Recent Analyst Actions and MarketReadPanel --
+  // see lib/use-briefing.ts's doc comment for why this can't be two
+  // independent fetches anymore.
+  const briefing = useBriefing(symbol);
 
   const [selection, setSelection] = useState<StrikeSelection | null>(null);
 
@@ -51,11 +56,11 @@ export function TickerDashboard({ symbol }: { symbol: string }) {
       <Section title="Overview">
         {quote.loading && <SkeletonLines count={3} />}
         {quote.error && <ErrorNote message={quote.error} />}
-        {quote.data && <QuoteHeader quote={quote.data} screener={screener} />}
+        {quote.data && <QuoteHeader quote={quote.data} screener={screener} briefing={briefing} />}
       </Section>
 
       <Section title="Market Read">
-        <MarketReadPanel symbol={symbol} earningsState={earnings} />
+        <MarketReadPanel briefing={briefing} earningsState={earnings} />
       </Section>
 
       <Section title="Event Timeline">

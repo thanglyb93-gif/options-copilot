@@ -10,7 +10,7 @@ import type {
   RankingSideResult,
   RankingTickerResult,
 } from "@/types/api";
-import { formatCurrency, formatDate } from "@/lib/format";
+import { formatCurrency, formatDate, formatRelativeTime } from "@/lib/format";
 import { tierClasses } from "@/components/shared/tier-classes";
 import { ExpirationSelect } from "@/components/shared/expiration-select";
 
@@ -59,6 +59,19 @@ function ScoreCell({ side, error }: { side: RankingSideResult | null; error: str
       </span>
     </div>
   );
+}
+
+/**
+ * Phase 42 -- Ranking reads whatever briefing/lean is already cached and
+ * never generates one itself, so the tradeoff (possibly stale, or
+ * entirely absent) needs to be visible per row rather than hidden behind
+ * a score that looks as authoritative as an individual ticker page's.
+ */
+function BriefingAge({ generatedAt }: { generatedAt: string | null }) {
+  if (!generatedAt) {
+    return <div className="text-[11px] text-amber-400">no briefing cached yet</div>;
+  }
+  return <div className="text-[11px] text-muted">lean: {formatRelativeTime(generatedAt)}</div>;
 }
 
 function CostBasisCell({
@@ -256,6 +269,7 @@ export function RankingDashboard() {
                       {t.currentPrice != null && (
                         <div className="text-[11px] text-muted">{formatCurrency(t.currentPrice)}</div>
                       )}
+                      <BriefingAge generatedAt={t.briefingGeneratedAt} />
                     </td>
                     <td className="px-3 py-2">
                       <ScoreCell side={t.put} error={t.putError} />

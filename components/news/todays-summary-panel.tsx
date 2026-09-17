@@ -18,12 +18,12 @@ export function TodaysSummaryPanel({
   error: string | null;
   onRefresh: () => void;
 }) {
-  const composed = data ? composeTodaysSummary(data.content) : null;
+  const composed = data?.content ? composeTodaysSummary(data.content) : null;
 
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center justify-between gap-3">
-        {data && (
+        {data?.generatedAt && (
           <span className="text-xs text-muted">
             Updated {formatRelativeTime(data.generatedAt)}
             {data.cached ? " (cached)" : ""}
@@ -41,6 +41,13 @@ export function TodaysSummaryPanel({
 
       {loading && <SkeletonLines count={4} />}
       {error && <ErrorNote message={error} />}
+
+      {data && data.content == null && !loading && (
+        <p className="text-sm text-muted">
+          Today&apos;s Summary unavailable (AI summary temporarily unable to generate) — see the
+          headline groups below for raw sourced headlines.
+        </p>
+      )}
 
       {composed && (
         <div className="flex flex-col gap-3">

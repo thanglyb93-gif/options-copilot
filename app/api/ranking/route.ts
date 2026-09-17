@@ -11,7 +11,7 @@ import { expectedMove, strikeCushion, cushionScore, momentumBufferMultiplier } f
 import { scoreTickerLevel, combineWithStrikeCushion, type TradeDirection } from "@/lib/entry-score";
 import { peerTickersFor, sectorGroupForTicker } from "@/lib/sector-groups";
 import { evaluateRelativeStrength, RELATIVE_STRENGTH_FETCH_DAYS, type PeerHistoricals, type RelativeStrengthEvaluation } from "@/lib/relative-strength";
-import { gatherBriefingContext, getOrGenerateBriefing } from "@/lib/briefing-service";
+import { gatherBriefingContext, getCachedBriefingOnly } from "@/lib/briefing-service";
 import { findNearestExpiration, findNearestStrike, mapWithConcurrency, type AvailableExpiration } from "@/lib/ranking";
 import type { RankingTickerResult } from "@/types/api";
 
@@ -80,6 +80,7 @@ async function computeTickerRanking(
   const empty = (message: string): RankingTickerResult => ({
     ticker,
     currentPrice: null,
+    briefingGeneratedAt: null,
     put: null,
     putError: message,
     call: null,
@@ -113,7 +114,12 @@ async function computeTickerRanking(
       return empty("No live options chain available for this ticker.");
     }
 
-    const { content: briefing } = await getOrGenerateBriefing(supabase, ticker, context.inputs, false);
+    // Phase 42 -- Ranking reads whatever briefing is already cached
+    // (regardless of age) and never triggers a fresh Anthropic
+    // generation itself; a cache miss just means the Events component's
+    // directional-alignment sub-score scores as absent (0), not opposing.
+    // Ticker pages' own Refresh button still generates normally.
+    const cachedBriefing = await getCachedBriefingOnly(supabase, ticker);
 
     const dtes = chain.expirations.map((e) => daysToExpiration(e.expirationDate));
     const frontMonthIndex = findClosestDteIndex(dtes, 37);
@@ -195,8 +201,8 @@ async function computeTickerRanking(
         direction,
         { currentIv, historicalValues, hvFallback },
         {
-          lean: briefing.directionalLean.lean,
-          rationale: briefing.directionalLean.rationale,
+          lean: cachedBriefing?.content.directionalLean.lean ?? null,
+          rationale: cachedBriefing?.content.directionalLean.rationale ?? null,
           daysSinceLastEarnings: context.daysSinceLastEarnings,
           recentHeadlineCount: context.recentHeadlineCount,
         },
@@ -224,6 +230,7 @@ async function computeTickerRanking(
     return {
       ticker,
       currentPrice: underlyingPrice,
+      briefingGeneratedAt: cachedBriefing?.generatedAt ?? null,
       put: "error" in putResult ? null : putResult,
       putError: "error" in putResult ? putResult.error : null,
       call: "error" in callResult ? null : { ...callResult, costBasis, costBasisMode },

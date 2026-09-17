@@ -5,7 +5,8 @@ import type { ClassifiedNewsHeadline, HeadlineCategory } from "@/types/api";
 import { formatRelativeTime } from "@/lib/format";
 import { Section } from "@/components/ticker/section";
 
-const CATEGORY_LABELS: Record<HeadlineCategory, string> = {
+/** Exported for reuse by the Event Timeline's marker popup (components/ticker/event-timeline-panel.tsx), which shows the same stored category -- one source of truth for the wording. */
+export const CATEGORY_LABELS: Record<HeadlineCategory | "unclassified", string> = {
   "monetary-policy": "Monetary Policy",
   "economic-data": "Economic Data",
   geopolitical: "Geopolitical",
@@ -18,6 +19,7 @@ const CATEGORY_LABELS: Record<HeadlineCategory, string> = {
   "notable-investor-move": "Notable Investor Moves",
   "new-to-watch": "New to Watch",
   other: "Other",
+  unclassified: "Unclassified",
 };
 
 function sortNewestFirst(headlines: ClassifiedNewsHeadline[]): ClassifiedNewsHeadline[] {
@@ -27,17 +29,24 @@ function sortNewestFirst(headlines: ClassifiedNewsHeadline[]): ClassifiedNewsHea
 }
 
 interface CategoryGroup {
-  category: HeadlineCategory;
+  category: HeadlineCategory | "unclassified";
   headlines: ClassifiedNewsHeadline[];
 }
 
-/** Groups by category, headlines newest-first within each group, groups ordered by their own newest headline. */
+/**
+ * Groups by category, headlines newest-first within each group, groups
+ * ordered by their own newest headline. A headline whose classification
+ * failed (Anthropic error -- see ClassifiedNewsHeadline.classified) is
+ * grouped separately as "Unclassified" rather than folded into "Other,"
+ * which is a real classification Claude can return.
+ */
 function groupByCategory(headlines: ClassifiedNewsHeadline[]): CategoryGroup[] {
-  const byCategory = new Map<HeadlineCategory, ClassifiedNewsHeadline[]>();
+  const byCategory = new Map<HeadlineCategory | "unclassified", ClassifiedNewsHeadline[]>();
   for (const h of headlines) {
-    const list = byCategory.get(h.category) ?? [];
+    const key = h.classified ? h.category : "unclassified";
+    const list = byCategory.get(key) ?? [];
     list.push(h);
-    byCategory.set(h.category, list);
+    byCategory.set(key, list);
   }
 
   const groups: CategoryGroup[] = Array.from(byCategory.entries()).map(([category, list]) => ({
@@ -56,9 +65,11 @@ function HeadlineRow({ headline }: { headline: ClassifiedNewsHeadline }) {
   return (
     <li className="flex flex-col gap-0.5">
       <div className="flex items-start gap-2">
-        <span className="mt-0.5 shrink-0 rounded border border-border px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted">
-          {CATEGORY_LABELS[headline.category]}
-        </span>
+        {headline.classified && (
+          <span className="mt-0.5 shrink-0 rounded border border-border px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted">
+            {CATEGORY_LABELS[headline.category]}
+          </span>
+        )}
         <a
           href={headline.url}
           target="_blank"

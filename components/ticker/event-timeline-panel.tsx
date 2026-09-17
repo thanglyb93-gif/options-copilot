@@ -14,6 +14,7 @@ import {
 import type { EventAnnotation, EventTimelineResponse, EventTimelineWindow } from "@/types/api";
 import { useJsonFetch } from "@/lib/use-json-fetch";
 import { formatCurrency, formatDate, formatPercent } from "@/lib/format";
+import { CATEGORY_LABELS } from "@/components/news/headline-groups";
 import { SkeletonLines, ErrorNote } from "./section";
 
 const WINDOWS: { value: EventTimelineWindow; label: string }[] = [
@@ -39,6 +40,12 @@ function typeLabel(a: EventAnnotation): string {
   if (a.type === "earnings") return "Earnings";
   if (a.type === "macro") return "Sector Context";
   return "Large Move";
+}
+
+/** The row's stored classification (lib/event-timeline.ts's findCatalystNearDate -- a real HeadlineCategory value, e.g. "financing-event") mapped to the same friendly label the News page uses. Falls back to the raw string for a value that predates a category being added, rather than hiding it. */
+function categoryLabel(classification: string | null): string | null {
+  if (!classification) return null;
+  return (CATEGORY_LABELS as Record<string, string>)[classification] ?? classification;
 }
 
 /** A single annotation positioned onto the nearest actual chart data point -- annotation dates (esp. earnings) don't always land on a trading day present in the series. */
@@ -85,6 +92,7 @@ function Legend() {
 }
 
 function AnnotationDetail({ annotation }: { annotation: EventAnnotation }) {
+  const category = categoryLabel(annotation.classification);
   return (
     <div className="flex flex-col gap-1.5 rounded-md border border-border bg-background px-3 py-2 text-sm">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -104,9 +112,16 @@ function AnnotationDetail({ annotation }: { annotation: EventAnnotation }) {
         </span>
       )}
       {annotation.headline ? (
-        <p className="text-xs leading-relaxed text-foreground">
-          {annotation.headline} <span className="text-muted">({annotation.source})</span>
-        </p>
+        <div className="flex flex-col gap-1">
+          <p className="text-xs leading-relaxed text-foreground">
+            {annotation.headline} <span className="text-muted">({annotation.source})</span>
+          </p>
+          {category && (
+            <span className="w-fit rounded border border-border px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted">
+              {category}
+            </span>
+          )}
+        </div>
       ) : annotation.type === "large-move" ? (
         <p className="text-xs text-muted">No specific catalyst found in available news.</p>
       ) : null}

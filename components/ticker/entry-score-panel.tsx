@@ -132,14 +132,30 @@ function SkewDetail({ skew }: { skew: SkewComponentResult }) {
  */
 function EventsDetail({ events }: { events: EntryScoreResponse["eventComponent"] }) {
   const total = round1(events.catalystScore + events.alignmentScore);
+  // "unavailable" is lib/entry-score.ts's sentinel for "no briefing to
+  // read at all" (an Anthropic failure here, or -- on the Ranking page --
+  // simply no cache yet) -- scored as absent (0), never as if it actively
+  // opposed the trade. Called out explicitly rather than folded into the
+  // normal "(lean: ...)" phrasing, so it reads as "we don't know," not as
+  // a real neutral/mixed lean Claude actually returned.
+  const alignmentUnavailable = events.lean === "unavailable";
   return (
     <div className="flex flex-col items-end gap-0.5">
       <span className="font-mono text-foreground">
         {total.toFixed(1)} / {EVENTS_WEIGHT.toFixed(1)}
       </span>
       <span className="text-xs text-muted">
-        catalyst recency {events.catalystScore.toFixed(1)}/{EVENTS_CATALYST_MAX.toFixed(1)}, directional alignment{" "}
-        {events.alignmentScore.toFixed(1)}/{EVENTS_ALIGNMENT_MAX.toFixed(1)} (lean: {events.lean})
+        catalyst recency {events.catalystScore.toFixed(1)}/{EVENTS_CATALYST_MAX.toFixed(1)},{" "}
+        {alignmentUnavailable ? (
+          <span className="text-amber-400">
+            directional alignment: unavailable (AI summary offline)
+          </span>
+        ) : (
+          <>
+            directional alignment {events.alignmentScore.toFixed(1)}/{EVENTS_ALIGNMENT_MAX.toFixed(1)} (lean:{" "}
+            {events.lean})
+          </>
+        )}
       </span>
     </div>
   );

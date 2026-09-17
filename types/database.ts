@@ -126,6 +126,17 @@ export type EventAnnotationRow = {
  * ticker's last-checked-at watermark, so there's no separate settings
  * table. See lib/position-alerts.ts.
  */
+/**
+ * Phase 43 Part C -- one row per calendar date, tracking how many
+ * Market-Read-style briefing generations have happened app-wide today.
+ * Keyed by date so "reset at midnight" is just a new row, not a job.
+ * See lib/market-read-cap.ts.
+ */
+export type MarketReadGenerationLogRow = {
+  date: string;
+  count: number;
+};
+
 export type AlertLogRow = {
   id: string;
   ticker: string;
@@ -223,6 +234,12 @@ export interface Database {
         Row: AlertLogRow;
         Insert: Partial<Pick<AlertLogRow, "id" | "sent_at">> & Pick<AlertLogRow, "ticker" | "headline_hash">;
         Update: Partial<AlertLogRow>;
+        Relationships: [];
+      };
+      market_read_generation_log: {
+        Row: MarketReadGenerationLogRow;
+        Insert: Partial<Pick<MarketReadGenerationLogRow, "count">> & Pick<MarketReadGenerationLogRow, "date">;
+        Update: Partial<MarketReadGenerationLogRow>;
         Relationships: [];
       };
     };

@@ -212,8 +212,9 @@ export interface IvPercentileInput {
 }
 
 export interface BriefingScoreInput {
-  lean: DirectionalLean;
-  rationale: string;
+  /** null when the caller has no briefing at all to read (Phase 42's Ranking cache-only path) -- scores the alignment sub-score as absent (0), not opposing. Every other caller always has a real lean here, generated or cached. */
+  lean: DirectionalLean | null;
+  rationale: string | null;
   daysSinceLastEarnings: number | null;
   recentHeadlineCount: number;
 }
@@ -405,6 +406,20 @@ function directionalAlignmentScore(
 export function scoreEventComponent(direction: TradeDirection, input: BriefingScoreInput): EventComponentResult {
   const catalystScore = catalystRecencyScore(input.daysSinceLastEarnings, input.recentHeadlineCount);
 
+  // No briefing to read at all (Ranking's cache-only path on a cache
+  // miss) -- absent, not opposing: score 0 without tripping the
+  // opposesTradeDirection warning, which means "this actively opposes
+  // the trade," not "we don't know."
+  if (input.lean == null) {
+    return {
+      catalystScore,
+      alignmentScore: 0,
+      lean: "unavailable",
+      rationale: "No cached briefing available for this ticker yet.",
+      opposesTradeDirection: false,
+    };
+  }
+
   // Selling a put wants the stock to hold/rise (bullish/neutral favorable);
   // selling a call wants it to hold/fall (bearish/neutral favorable). The
   // remaining case (lean === "bearish" for a put, "bullish" for a call) is
@@ -416,7 +431,7 @@ export function scoreEventComponent(direction: TradeDirection, input: BriefingSc
     catalystScore,
     alignmentScore,
     lean: input.lean,
-    rationale: input.rationale,
+    rationale: input.rationale ?? "",
     opposesTradeDirection,
   };
 }

@@ -4,7 +4,7 @@ import type { QuoteResponse, ScreenerResponse, BriefingResponse, AnalystAction }
 import { describeTrend } from "@/lib/trend";
 import { guidanceIndicatorById } from "@/lib/guidance-content";
 import { ImportanceBadge } from "@/components/shared/importance-badge";
-import { useJsonFetch, type FetchState } from "@/lib/use-json-fetch";
+import type { FetchState } from "@/lib/use-json-fetch";
 import {
   formatCompactNumber,
   formatCurrency,
@@ -90,10 +90,15 @@ function actionVerbPhrase(action: AnalystAction): string {
  * above. Only rendered once briefing data has loaded and the array is
  * non-empty -- no loading/empty-state UI, since this is supplementary
  * context, not a primary page element worth a skeleton.
+ *
+ * Reads the SAME briefing fetch MarketReadPanel uses (lifted to the
+ * ticker page via lib/use-briefing.ts) rather than firing its own
+ * independent request for identical data -- see that hook's doc
+ * comment for why a duplicate fetch here used to double-count against
+ * Phase 43's daily generation cap.
  */
-function RecentAnalystActions({ ticker }: { ticker: string }) {
-  const { data } = useJsonFetch<BriefingResponse>(`/api/briefing/${ticker}`);
-  const actions = data?.content.analystActions ?? [];
+function RecentAnalystActions({ briefing }: { briefing: FetchState<BriefingResponse> }) {
+  const actions = briefing.data?.content?.analystActions ?? [];
   const indicator = guidanceIndicatorById("analyst-actions");
 
   if (actions.length === 0) return null;
@@ -123,10 +128,13 @@ function RecentAnalystActions({ ticker }: { ticker: string }) {
 export function QuoteHeader({
   quote,
   screener,
+  briefing,
 }: {
   quote: QuoteResponse;
   /** Same relative-strength evaluation the Screener computes for this ticker -- reused, not recomputed, so the two surfaces can never disagree. */
   screener: FetchState<ScreenerResponse>;
+  /** Passed through to RecentAnalystActions -- see its own doc comment for why this is shared, not fetched here. */
+  briefing: FetchState<BriefingResponse>;
 }) {
   const changeUp = (quote.dayChange ?? 0) >= 0;
   const trend =
@@ -176,7 +184,7 @@ export function QuoteHeader({
           <Stat label="Beta" value={quote.beta != null ? quote.beta.toFixed(2) : "—"} />
           <AnalystTargetStat quote={quote} />
         </div>
-        <RecentAnalystActions ticker={quote.ticker} />
+        <RecentAnalystActions briefing={briefing} />
       </div>
 
       {(trend || screener.loading || screener.data) && (

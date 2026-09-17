@@ -21,6 +21,9 @@ import {
 import { generateTodaysSummary, type TodaysSummaryInputs } from "./todays-summary";
 import { getOrClassifyHeadlines, stableHeadlineId } from "./headline-classification-service";
 import type { ClassifiableHeadline, HeadlineCategory, HeadlineLevel } from "./headline-classification";
+import { catalystRecencyScore } from "./entry-score";
+import { getDailyGenerationStatus, incrementDailyGenerationCount } from "./market-read-cap";
+import type { DirectionalLean } from "./briefing";
 
 const EARNINGS_LOOKBACK_DAYS = 14;
 const EARNINGS_LOOKAHEAD_DAYS = 120;
@@ -236,6 +239,45 @@ async function recordLeanHistory(
   }
 }
 
+export interface CachedBriefingOnly {
+  content: BriefingContent;
+  generatedAt: string;
+}
+
+/**
+ * Phase 42 -- reads the `briefings` table directly for `ticker` and
+ * returns whatever is cached there, regardless of age, WITHOUT ever
+ * calling generate() on a miss or stale-schema row. Used only by the
+ * Ranking page's batch computation, which must stay strictly read-only
+ * against Anthropic (a real generation call per watchlisted ticker on
+ * every calculation would be both slow and expensive) -- ticker pages
+ * and their manual Refresh button keep using getOrGenerateBriefing
+ * above, unchanged.
+ */
+export async function getCachedBriefingOnly(
+  supabase: SupabaseClient<Database>,
+  ticker: string
+): Promise<CachedBriefingOnly | null> {
+  const { data: cached, error } = await supabase
+    .from("briefings")
+    .select("*")
+    .eq("ticker", ticker)
+    .maybeSingle();
+
+  if (error) {
+    console.error(`Failed to read briefing cache for ${ticker}:`, error.message);
+    return null;
+  }
+  if (!cached) return null;
+
+  try {
+    return { content: parseBriefingContent(cached.content), generatedAt: cached.generated_at };
+  } catch {
+    // Stale schema (predates a briefing field) -- treat as no cache, same as a genuine miss.
+    return null;
+  }
+}
+
 export async function getOrGenerateBriefing(
   supabase: SupabaseClient<Database>,
   ticker: string,
@@ -255,6 +297,81 @@ export async function getOrGenerateBriefing(
   }
 
   return result;
+}
+
+/**
+ * Phase 43 Part C -- the structured, no-new-API-call fallback shown when
+ * a real generation is either capped or has genuinely failed. Every
+ * field here comes from data already gathered for this ticker: catalyst
+ * recency is the same mechanical (non-LLM) Events sub-score
+ * lib/entry-score.ts computes, and cachedLean is whatever a PRIOR real
+ * generation left behind, however old -- reusing getCachedBriefingOnly's
+ * cache-only read (Phase 42) rather than a second mechanism, its age
+ * always attached so staleness is stated, never hidden.
+ */
+export interface StructuredFactsFallback {
+  catalystRecencyScore: number;
+  cachedLean: { lean: DirectionalLean; rationale: string; generatedAt: string } | null;
+}
+
+export type BriefingOutcome =
+  | { mode: "fresh-cache" | "generated"; content: BriefingContent; generatedAt: string; fallback: null }
+  | { mode: "capped" | "failed"; content: null; generatedAt: null; fallback: StructuredFactsFallback };
+
+/**
+ * The single decision point every per-ticker briefing consumer (Market
+ * Read, Entry Score's Events component) goes through, so the daily cap
+ * applies identically regardless of which UI surface triggered the
+ * check: a fresh cache is served as-is (cap-independent, same as
+ * always); a stale-or-missing cache generates normally and increments
+ * the shared daily counter ONLY when the cap isn't yet hit; once hit,
+ * every remaining ticker that day gets the structured-facts fallback
+ * instead, regardless of how stale that specific ticker's own cache is.
+ * A genuine generation failure (Anthropic down/out of credits) gets the
+ * identical fallback, replacing Phase 42's plain error-only fallback
+ * with something that actually uses the data already on hand.
+ */
+export async function getBriefingRespectingDailyCap(
+  supabase: SupabaseClient<Database>,
+  ticker: string,
+  context: BriefingContext,
+  forceRefresh = false
+): Promise<BriefingOutcome> {
+  const cached = await getCachedBriefingOnly(supabase, ticker);
+  // A manual Refresh click still has to clear the cap check below --
+  // forceRefresh only skips treating a fresh cache as good enough, it
+  // never lets a user bypass the daily limit by re-clicking.
+  const isFresh =
+    !forceRefresh && cached != null && Date.now() - new Date(cached.generatedAt).getTime() < CACHE_TTL_MS;
+
+  if (cached && isFresh) {
+    return { mode: "fresh-cache", content: cached.content, generatedAt: cached.generatedAt, fallback: null };
+  }
+
+  const buildFallback = (): StructuredFactsFallback => ({
+    catalystRecencyScore: catalystRecencyScore(context.daysSinceLastEarnings, context.recentHeadlineCount),
+    cachedLean: cached
+      ? {
+          lean: cached.content.directionalLean.lean,
+          rationale: cached.content.directionalLean.rationale,
+          generatedAt: cached.generatedAt,
+        }
+      : null,
+  });
+
+  const status = await getDailyGenerationStatus(supabase);
+  if (status.capHit) {
+    return { mode: "capped", content: null, generatedAt: null, fallback: buildFallback() };
+  }
+
+  try {
+    const result = await getOrGenerateBriefing(supabase, ticker, context.inputs, forceRefresh);
+    await incrementDailyGenerationCount(supabase);
+    return { mode: "generated", content: result.content, generatedAt: result.generatedAt, fallback: null };
+  } catch (error) {
+    console.error(`Briefing generation failed for ${ticker}, falling back to structured facts:`, error);
+    return { mode: "failed", content: null, generatedAt: null, fallback: buildFallback() };
+  }
 }
 
 /** A general-market headline, classified into a level + category (see lib/headline-classification.ts). */
@@ -308,10 +425,12 @@ export async function gatherTodaysSummaryContext(
   const classifications = await getOrClassifyHeadlines(supabase, classifiable);
 
   const headlines: ClassifiedNewsHeadline[] = classifiable.map((h, i) => {
-    // Fallback for the rare case a classification failed validation and was
-    // dropped -- keeps every headline visible on the page rather than
-    // silently disappearing one.
-    const classification = classifications.get(h.id) ?? { level: "individual" as const, category: "other" as const };
+    // Missing here means either dropped by response validation or the
+    // whole batch failed (e.g. Anthropic out of credits/rate limited) --
+    // either way, a neutral fallback keeps every headline visible on the
+    // page rather than silently disappearing one, and `classified: false`
+    // lets the UI show it plainly instead of as a real classification.
+    const classification = classifications.get(h.id);
     return {
       id: h.id,
       headline: h.headline,
@@ -319,8 +438,9 @@ export async function gatherTodaysSummaryContext(
       url: rawHeadlines[i].url,
       summary: h.summary,
       publishedAt: h.publishedAt,
-      level: classification.level,
-      category: classification.category,
+      level: classification?.level ?? "individual",
+      category: classification?.category ?? "other",
+      classified: classification != null,
     };
   });
 

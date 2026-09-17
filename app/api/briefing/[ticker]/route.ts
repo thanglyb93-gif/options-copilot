@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSupabaseRouteClient } from "@/lib/supabase";
-import { gatherBriefingContext, getOrGenerateBriefing } from "@/lib/briefing-service";
+import { gatherBriefingContext, getBriefingRespectingDailyCap } from "@/lib/briefing-service";
+import { getDailyGenerationStatus } from "@/lib/market-read-cap";
 
 export async function GET(
   request: Request,
@@ -11,18 +12,28 @@ export async function GET(
   const supabase = getSupabaseRouteClient();
 
   try {
-    const { inputs } = await gatherBriefingContext(ticker);
-    const { content, generatedAt, cached } = await getOrGenerateBriefing(
-      supabase,
-      ticker,
-      inputs,
-      forceRefresh
-    );
+    const context = await gatherBriefingContext(ticker);
+    const outcome = await getBriefingRespectingDailyCap(supabase, ticker, context, forceRefresh);
+    // Re-read after the call above (rather than reusing a status read
+    // from inside it) so a request that just generated and incremented
+    // the counter reports its own up-to-date count, not a stale one.
+    const dailyStatus = await getDailyGenerationStatus(supabase);
 
-    return NextResponse.json({ ticker, content, generatedAt, cached });
+    return NextResponse.json({
+      ticker,
+      mode: outcome.mode,
+      content: outcome.content,
+      generatedAt: outcome.generatedAt,
+      fallback: outcome.fallback,
+      dailyStatus,
+    });
   } catch (error) {
+    // Never surface the raw error (an Anthropic failure's message can be
+    // the literal API error body) -- log it, return something a calm UI
+    // fallback can show instead. See components/ticker/market-read-panel.tsx.
+    console.error(`Market Read failed for ${ticker}:`, error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Unknown error" },
+      { error: "Market Read unavailable right now." },
       { status: 502 }
     );
   }

@@ -508,8 +508,8 @@ export function ComparisonPanel({
       )}
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <MiniSelectorFields label="Call side" options={options} sel={callSel} />
         <MiniSelectorFields label="Put side" options={options} sel={putSel} />
+        <MiniSelectorFields label="Call side" options={options} sel={callSel} />
       </div>
 
       {comparison.loading && <SkeletonLines count={4} />}
@@ -543,13 +543,13 @@ export function ComparisonPanel({
             flow, one full-width column at a time.
           */}
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:grid-rows-[repeat(8,auto)]">
-            <CallCard side={comparison.data.callSide} score={callEntryScore} timingCaution={callScore.data?.timingCaution} />
             <PutCard
               side={comparison.data.putSide}
               ninetyDayRange={comparison.data.ninetyDayRange}
               score={putEntryScore}
               timingCaution={putScore.data?.timingCaution}
             />
+            <CallCard side={comparison.data.callSide} score={callEntryScore} timingCaution={callScore.data?.timingCaution} />
           </div>
 
           <p className="text-xs text-muted">
