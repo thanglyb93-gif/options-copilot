@@ -17,7 +17,7 @@ import {
   spreadQuality,
   type OptionType,
 } from "@/lib/options-math";
-import { deltaBandFlag, dteBandFlag, unreliableIvFlag } from "@/lib/flags";
+import { deltaBandFlag, dteBandFlag } from "@/lib/flags";
 import { atmImpliedVolatility, ivTermStructure, volatilitySkew } from "@/lib/volatility";
 import { expectedMove, strikeCushion, cushionScore, momentumBufferMultiplier } from "@/lib/expected-move";
 import {
@@ -193,17 +193,29 @@ export async function GET(
     // "Front month" for the volatility panel targets the 30-45 DTE band
     // this app screens for, not literally the nearest calendar
     // expiration -- the nearest weekly is frequently a dead contract with
-    // no real market (see unreliableIvFlag).
+    // no real market.
     const targetIndex = findClosestDteIndex(
       chain.expirations.map((e) => daysToExpiration(e.expirationDate))
     );
-    const frontMonth = chain.expirations[targetIndex];
+    // Reuses the already-mapped front-month row (expirations[targetIndex]),
+    // not the raw chain.expirations[targetIndex] -- mapContract() has
+    // already run each contract through effectiveIvAndDelta's market-
+    // hours-aware reliability + lastPrice-fallback IV solving, so both
+    // the ATM IV below and volatilitySkew (which needs each contract's
+    // computed delta) get that same treatment instead of a bare live-
+    // bid/ask-only filter that would zero out every contract (and both
+    // components) whenever the market's closed.
+    const frontMonthMapped = expirations[targetIndex];
+    const toAtmContract = (c: { strike: number; impliedVolatility: number | null; ivUnreliable: boolean }) => ({
+      strike: c.strike,
+      impliedVolatility: c.ivUnreliable ? undefined : c.impliedVolatility ?? undefined,
+    });
     const frontMonthAtmIv =
-      frontMonth && chain.underlyingPrice != null
+      frontMonthMapped && chain.underlyingPrice != null
         ? atmImpliedVolatility({
             underlyingPrice: chain.underlyingPrice,
-            calls: frontMonth.calls.filter((c) => !unreliableIvFlag(c)),
-            puts: frontMonth.puts.filter((p) => !unreliableIvFlag(p)),
+            calls: frontMonthMapped.calls.map(toAtmContract),
+            puts: frontMonthMapped.puts.map(toAtmContract),
           })
         : null;
 
@@ -215,12 +227,22 @@ export async function GET(
     // comparison rather than a real term-structure read.
     const farDte = farChain ? daysToExpiration(farChain.expirationDate) : null;
     const farInBand = farDte != null && farDte >= FAR_TERM_MIN_DTE && farDte <= FAR_TERM_MAX_DTE;
+    const toEffectiveIvContract = (contract: CallOrPut, optionType: OptionType) => {
+      const { effectiveIv, ivUnreliable } = effectiveIvAndDelta(
+        contract,
+        optionType,
+        farChain?.underlyingPrice,
+        farDte ?? 0,
+        farChain?.marketState
+      );
+      return { strike: contract.strike, impliedVolatility: ivUnreliable ? undefined : effectiveIv ?? undefined };
+    };
     const farMonthAtmIv =
       farChain && farInBand && chain.underlyingPrice != null
         ? atmImpliedVolatility({
             underlyingPrice: chain.underlyingPrice,
-            calls: farChain.calls.filter((c) => !unreliableIvFlag(c)),
-            puts: farChain.puts.filter((p) => !unreliableIvFlag(p)),
+            calls: farChain.calls.map((c) => toEffectiveIvContract(c, "call")),
+            puts: farChain.puts.map((p) => toEffectiveIvContract(p, "put")),
           })
         : null;
 
@@ -229,10 +251,6 @@ export async function GET(
         ? ivTermStructure(frontMonthAtmIv, farMonthAtmIv)
         : null;
 
-    // Uses the already-mapped front-month row (expirations[targetIndex]),
-    // not the raw `frontMonth` chain above -- volatilitySkew needs each
-    // contract's computed delta, which only exists after mapContract().
-    const frontMonthMapped = expirations[targetIndex];
     const skew = frontMonthMapped
       ? volatilitySkew({ calls: frontMonthMapped.calls, puts: frontMonthMapped.puts })
       : null;

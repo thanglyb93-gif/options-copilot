@@ -20,13 +20,14 @@ import { ImportanceBadge } from "@/components/shared/importance-badge";
 import { IndicatorLabel } from "@/components/shared/indicator-label";
 import { TimingCautionIcon } from "@/components/shared/timing-caution-badge";
 import type {
+  ContractRow,
   EntryScoreResponse,
   IvComponentResult,
   RelativeStrengthComponentResult,
   SkewComponentResult,
 } from "@/types/api";
 import { SkeletonLines, ErrorNote } from "./section";
-import type { StrikeSelection } from "./strike-selector";
+import type { StrikeContext } from "./strike-selector";
 
 function tierClasses(tier: string): { text: string; border: string } {
   if (tier.startsWith("SELL")) return { text: "text-accent", border: "border-accent/40" };
@@ -68,8 +69,8 @@ function ComponentRow({
  * the exact underlying/sector evidence driving it, in plain sight next
  * to the score it affects. Never a silent penalty.
  */
-function MomentumAdjustmentNote({ matchedSelection }: { matchedSelection: StrikeSelection | null }) {
-  const adjustment = matchedSelection?.contract.momentumAdjustment;
+function MomentumAdjustmentNote({ contract }: { contract: ContractRow | undefined }) {
+  const adjustment = contract?.momentumAdjustment;
   if (!adjustment) return null;
   return (
     <p className="text-[11px] leading-relaxed text-amber-300">
@@ -178,14 +179,22 @@ function relativeStrengthDetail(rs: RelativeStrengthComponentResult): string {
   return `${rs.score.toFixed(1)} / ${RELATIVE_STRENGTH_WEIGHT.toFixed(1)} (${parts.join(", ")})`;
 }
 
-function TechnicalDetail({ matchedSelection }: { matchedSelection: StrikeSelection | null }) {
-  if (!matchedSelection) return <>— (select a strike below)</>;
-  const { contract, strike } = matchedSelection;
+function TechnicalDetail({
+  contract,
+  strike,
+  direction,
+}: {
+  contract: ContractRow | undefined;
+  strike: number | null;
+  direction: "put" | "call";
+}) {
+  if (strike == null) return <>— (select a strike below)</>;
+  if (!contract) return <>— (no {direction} contract at {strike})</>;
   if (contract.cushionScore == null) return <>— (unavailable for strike {strike})</>;
   const emText =
     contract.emCushion != null ? `${contract.emCushion.toFixed(2)}x expected move` : "expected move unavailable";
   const structural = contract.structuralConfirmation?.confirmed
-    ? `, ${matchedSelection.direction === "put" ? "below" : "above"} ${contract.structuralConfirmation.referenceLabel}`
+    ? `, ${direction === "put" ? "below" : "above"} ${contract.structuralConfirmation.referenceLabel}`
     : "";
   // contract.cushionScore is lib/expected-move.ts's raw 0-2 cushionScore
   // (shared with Roll Calculator/Simulated Backtest/Counterfactual
@@ -206,19 +215,24 @@ function EntryScoreCard({
   label,
   direction,
   scoreState,
-  selection,
+  strikeContext,
 }: {
   label: string;
   direction: "put" | "call";
   scoreState: FetchState<EntryScoreResponse>;
-  selection: StrikeSelection | null;
+  strikeContext: StrikeContext | null;
 }) {
   const { data, loading, error } = scoreState;
-  const matchedSelection = selection && selection.direction === direction ? selection : null;
-  const cushionScoreValue = matchedSelection?.contract.cushionScore ?? null;
+  // Independent of which direction is currently toggled in the Strike
+  // Selector above -- both sides' contract at the selected strike are
+  // always available (see StrikeContext's own doc comment), so picking
+  // one strike completes BOTH Put Score and Call Score's Technical
+  // component, not just whichever direction happens to be toggled.
+  const technicalContract = direction === "put" ? strikeContext?.putContract : strikeContext?.callContract;
+  const cushionScoreValue = technicalContract?.cushionScore ?? null;
 
-  const combined = data ? combineWithStrikeCushion(data.partialTotal, matchedSelection ? cushionScoreValue : null) : null;
-  const isComplete = matchedSelection != null && data != null;
+  const combined = data ? combineWithStrikeCushion(data.partialTotal, cushionScoreValue) : null;
+  const isComplete = technicalContract != null && cushionScoreValue != null && data != null;
 
   const entryScoreIndicator = guidanceIndicatorById("entry-score");
 
@@ -276,9 +290,15 @@ function EntryScoreCard({
             />
             <ComponentRow
               label="Technical"
-              detail={<TechnicalDetail matchedSelection={matchedSelection} />}
+              detail={
+                <TechnicalDetail
+                  contract={technicalContract}
+                  strike={strikeContext?.strike ?? null}
+                  direction={direction}
+                />
+              }
               indicatorId="technical-em-cushion"
-              footnote={<MomentumAdjustmentNote matchedSelection={matchedSelection} />}
+              footnote={<MomentumAdjustmentNote contract={technicalContract} />}
             />
             <ComponentRow
               label="Events"
@@ -301,16 +321,16 @@ function EntryScoreCard({
 export function EntryScorePanel({
   putScore,
   callScore,
-  selection,
+  strikeContext,
 }: {
   putScore: FetchState<EntryScoreResponse>;
   callScore: FetchState<EntryScoreResponse>;
-  selection: StrikeSelection | null;
+  strikeContext: StrikeContext | null;
 }) {
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-      <EntryScoreCard label="Put Score" direction="put" scoreState={putScore} selection={selection} />
-      <EntryScoreCard label="Call Score" direction="call" scoreState={callScore} selection={selection} />
+      <EntryScoreCard label="Put Score" direction="put" scoreState={putScore} strikeContext={strikeContext} />
+      <EntryScoreCard label="Call Score" direction="call" scoreState={callScore} strikeContext={strikeContext} />
     </div>
   );
 }

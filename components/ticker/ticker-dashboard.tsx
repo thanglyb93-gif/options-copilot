@@ -17,7 +17,7 @@ import { Section, SkeletonLines, ErrorNote } from "./section";
 import { QuoteHeader } from "./quote-header";
 import { MarketReadPanel } from "./market-read-panel";
 import { EventTimelinePanel } from "./event-timeline-panel";
-import { StrikeSelector, type StrikeSelection } from "./strike-selector";
+import { StrikeSelector, type StrikeSelection, type StrikeContext } from "./strike-selector";
 import { StrikeDecisionPanel } from "./strike-decision-panel";
 import { EntryTimeIndicators } from "./entry-time-indicators";
 import { ComparisonPanel } from "./comparison-panel";
@@ -41,6 +41,7 @@ export function TickerDashboard({ symbol }: { symbol: string }) {
   const briefing = useBriefing(symbol);
 
   const [selection, setSelection] = useState<StrikeSelection | null>(null);
+  const [strikeContext, setStrikeContext] = useState<StrikeContext | null>(null);
 
   return (
     <div className="flex flex-col gap-4">
@@ -78,6 +79,7 @@ export function TickerDashboard({ symbol }: { symbol: string }) {
               underlyingPrice={quote.data?.price ?? options.data.underlyingPrice}
               maxPain={maxPain.data}
               onSelectionChange={setSelection}
+              onStrikeContextChange={setStrikeContext}
             />
           )}
 
@@ -100,6 +102,7 @@ export function TickerDashboard({ symbol }: { symbol: string }) {
             putScore={putScore}
             callScore={callScore}
             selection={selection}
+            strikeContext={strikeContext}
             options={options.data}
             quote={quote.data}
             maxPain={maxPain.data}

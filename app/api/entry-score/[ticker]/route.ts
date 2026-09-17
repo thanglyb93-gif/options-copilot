@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import type { CallOrPut } from "yahoo-finance2/modules/options";
 import { daysToExpiration, fetchHistoricalCloses, fetchTargetExpirationChain } from "@/lib/yahoo";
 import { getSupabaseRouteClient } from "@/lib/supabase";
-import { unreliableIvFlag } from "@/lib/flags";
 import { effectiveIvAndDelta } from "@/lib/options-math";
 import {
   atmImpliedVolatility,
@@ -103,23 +102,38 @@ export async function GET(
       rationale = outcome.content.directionalLean.rationale;
     }
 
-    const reliableCalls = targetChain.calls.filter((c) => !unreliableIvFlag(c));
-    const reliablePuts = targetChain.puts.filter((p) => !unreliableIvFlag(p));
+    // Both the IV Component's ATM IV and Skew need each contract's
+    // EFFECTIVE IV, via the same reliability + lastPrice-fallback
+    // solving /api/options uses per display row (lib/options-math.ts's
+    // effectiveIvAndDelta) -- not a bare live-bid/ask-only check, which
+    // would zero out every contract (and therefore both components)
+    // whenever the market's closed, which is most of the time this
+    // page gets loaded.
+    const dte = daysToExpiration(targetChain.expirationDate);
+
+    const toEffectiveIvContract = (contract: CallOrPut, optionType: "call" | "put") => {
+      const { effectiveIv, ivUnreliable } = effectiveIvAndDelta(
+        contract,
+        optionType,
+        targetChain.underlyingPrice,
+        dte,
+        targetChain.marketState
+      );
+      return { strike: contract.strike, impliedVolatility: ivUnreliable ? undefined : effectiveIv ?? undefined };
+    };
 
     const currentIv =
       targetChain.underlyingPrice != null
-        ? atmImpliedVolatility({ underlyingPrice: targetChain.underlyingPrice, calls: reliableCalls, puts: reliablePuts })
+        ? atmImpliedVolatility({
+            underlyingPrice: targetChain.underlyingPrice,
+            calls: targetChain.calls.map((c) => toEffectiveIvContract(c, "call")),
+            puts: targetChain.puts.map((p) => toEffectiveIvContract(p, "put")),
+          })
         : null;
 
-    // Skew needs each contract's delta, computed via the exact same
-    // reliability + lastPrice-fallback IV-solving logic /api/options
-    // uses per display row (lib/options-math.ts's effectiveIvAndDelta) --
-    // not the ATM-IV-only unreliableIvFlag filter above, which requires
-    // a genuinely live bid/ask and would zero out every contract (and
-    // therefore this component) whenever the market's closed. Skew is
-    // computed against the full contract set, same as /api/options:
-    // volatilitySkew itself only accepts candidates with a real delta.
-    const dte = daysToExpiration(targetChain.expirationDate);
+    // Skew is computed against the full contract set, same as
+    // /api/options: volatilitySkew itself only accepts candidates with
+    // a real delta.
     const toSkewContract = (contract: CallOrPut, optionType: "call" | "put"): SkewChainContract => {
       const { effectiveIv, delta } = effectiveIvAndDelta(
         contract,

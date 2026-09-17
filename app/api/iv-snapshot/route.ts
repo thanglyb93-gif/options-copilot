@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
+import type { CallOrPut } from "yahoo-finance2/modules/options";
 import { getSupabaseRouteClient } from "@/lib/supabase";
-import { fetchTargetExpirationChain, fetchHistoricalCloses } from "@/lib/yahoo";
+import { fetchTargetExpirationChain, fetchHistoricalCloses, daysToExpiration } from "@/lib/yahoo";
 import { atmImpliedVolatility, historicalVolatility } from "@/lib/volatility";
-import { unreliableIvFlag } from "@/lib/flags";
+import { effectiveIvAndDelta, type OptionType } from "@/lib/options-math";
 import { sendIvSnapshotFailureAlert } from "@/lib/alerts";
 
 interface SnapshotResult {
@@ -41,10 +42,29 @@ async function runSnapshot(): Promise<{ date: string; results: SnapshotResult[] 
         continue;
       }
 
+      // This cron runs at 21:00 UTC (vercel.json) -- at or after regular
+      // market close every single day, so chain.marketState here is
+      // essentially never "REGULAR." A bare live-bid/ask-only filter
+      // zeroes out every contract in that state, which would have been
+      // silently storing a null IV snapshot for every ticker, every day
+      // -- the same market-hours-aware effective-IV solving used
+      // elsewhere (lib/options-math.ts's effectiveIvAndDelta) instead
+      // falls back to solving IV from each contract's real lastPrice.
+      const chainDte = daysToExpiration(chain.expirationDate);
+      const toEffectiveIvContract = (contract: CallOrPut, optionType: OptionType) => {
+        const { effectiveIv, ivUnreliable } = effectiveIvAndDelta(
+          contract,
+          optionType,
+          chain.underlyingPrice,
+          chainDte,
+          chain.marketState
+        );
+        return { strike: contract.strike, impliedVolatility: ivUnreliable ? undefined : effectiveIv ?? undefined };
+      };
       const iv = atmImpliedVolatility({
         underlyingPrice: chain.underlyingPrice,
-        calls: chain.calls.filter((c) => !unreliableIvFlag(c)),
-        puts: chain.puts.filter((p) => !unreliableIvFlag(p)),
+        calls: chain.calls.map((c) => toEffectiveIvContract(c, "call")),
+        puts: chain.puts.map((p) => toEffectiveIvContract(p, "put")),
       });
       const hv = historicalVolatility(closes, 30);
 

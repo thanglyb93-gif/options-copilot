@@ -73,28 +73,6 @@ export interface ContractQuoteLike {
   impliedVolatility?: number | null;
 }
 
-/**
- * Flags a contract's IV (and anything derived from it, like delta/theta)
- * as unreliable. Two independent sources of garbage observed against real
- * data: (1) contracts with no live two-sided market (bid and ask both
- * zero/absent) get a stale or placeholder IV from Yahoo rather than a
- * real market-implied one, producing degenerate Black-Scholes greeks;
- * (2) even quoted contracts occasionally show implausible IV (>200%),
- * typically deep-ITM or otherwise illiquid strikes.
- */
-export function unreliableIvFlag(
-  contract: ContractQuoteLike,
-  threshold = 2.0
-): boolean {
-  const hasLiveMarket = (contract.bid ?? 0) > 0 && (contract.ask ?? 0) > 0;
-  if (!hasLiveMarket) return true;
-
-  const iv = contract.impliedVolatility;
-  if (iv == null || iv <= 0 || iv > threshold) return true;
-
-  return false;
-}
-
 export interface ChainContractQuoteLike extends ContractQuoteLike {
   lastPrice?: number | null;
 }

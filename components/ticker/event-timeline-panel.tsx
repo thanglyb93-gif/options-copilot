@@ -219,6 +219,30 @@ export function EventTimelinePanel({ ticker }: { ticker: string }) {
                   dot={false}
                   isAnimationActive={false}
                 />
+                {/*
+                  A 5px-radius circle is a tiny, hard-to-hit target (well
+                  under any reasonable touch/click minimum), and recharts'
+                  own Tooltip mouse-tracking layer sits on top of the chart
+                  and can win the hit-test against a marker this small. This
+                  renders a larger, fully invisible ReferenceDot at the same
+                  point first (recharts needs these as direct LineChart
+                  children, not wrapped in a <g> or Fragment, to position
+                  them correctly) sharing the same onClick, giving a much
+                  bigger hit area without changing the marker's visible
+                  size; the real, visible dot below paints on top of it.
+                */}
+                {plotted.map((p, i) => (
+                  <ReferenceDot
+                    key={`${p.annotation.type}-${p.annotation.date}-${i}-hit`}
+                    x={p.plotDate}
+                    y={p.plotClose}
+                    r={14}
+                    fill="transparent"
+                    stroke="none"
+                    onClick={() => setSelected(p.annotation)}
+                    style={{ cursor: "pointer" }}
+                  />
+                ))}
                 {plotted.map((p, i) => (
                   <ReferenceDot
                     key={`${p.annotation.type}-${p.annotation.date}-${i}`}

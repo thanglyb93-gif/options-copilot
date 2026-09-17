@@ -25,18 +25,36 @@ export interface StrikeSelection {
   costBasis: number | null;
 }
 
+/**
+ * Independent of `direction` -- both the put and call contract at the
+ * currently selected strike/expiration, whenever one exists on that
+ * side. StrikeSelection above is scoped to whichever direction is
+ * toggled (premium/P&L are inherently one-sided), but Technical/EM
+ * Cushion is precomputed per-contract regardless of direction, so the
+ * Entry Score panel can complete BOTH Put Score and Call Score's
+ * Technical component from one strike pick instead of only whichever
+ * side happens to be toggled right now.
+ */
+export interface StrikeContext {
+  strike: number;
+  putContract: ContractRow | undefined;
+  callContract: ContractRow | undefined;
+}
+
 export function StrikeSelector({
   symbol,
   options,
   underlyingPrice,
   maxPain,
   onSelectionChange,
+  onStrikeContextChange,
 }: {
   symbol: string;
   options: OptionsResponse;
   underlyingPrice: number | null;
   maxPain: MaxPainResponse | null;
   onSelectionChange: (selection: StrikeSelection | null) => void;
+  onStrikeContextChange?: (context: StrikeContext | null) => void;
 }) {
   const [expirationIndex, setExpirationIndex] = useState(options.defaultExpirationIndex);
   const [strike, setStrike] = useState<number | null>(null);
@@ -113,11 +131,29 @@ export function StrikeSelector({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [strikes]);
 
-  const contract = useMemo(() => {
+  const putContract = useMemo(() => {
     if (!expiration || strike == null) return undefined;
-    const list = direction === "call" ? expiration.calls : expiration.puts;
-    return list.find((c) => c.strike === strike);
-  }, [expiration, strike, direction]);
+    return expiration.puts.find((c) => c.strike === strike);
+  }, [expiration, strike]);
+
+  const callContract = useMemo(() => {
+    if (!expiration || strike == null) return undefined;
+    return expiration.calls.find((c) => c.strike === strike);
+  }, [expiration, strike]);
+
+  const contract = direction === "call" ? callContract : putContract;
+
+  // Fired independently of the direction-scoped selection below -- a
+  // toggle to "Sell Put" with no valid put premium at this strike still
+  // has a perfectly good call contract's Technical component to report.
+  useEffect(() => {
+    if (strike == null) {
+      onStrikeContextChange?.(null);
+      return;
+    }
+    onStrikeContextChange?.({ strike, putContract, callContract });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [strike, putContract, callContract]);
 
   useEffect(() => {
     if (!expiration || strike == null || !contract) {

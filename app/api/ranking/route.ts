@@ -5,7 +5,6 @@ import { getSupabaseRouteClient } from "@/lib/supabase";
 import type { Database } from "@/types/database";
 import { daysToExpiration, fetchHistoricalCloses, fetchOptionsChainWithinDays } from "@/lib/yahoo";
 import { findClosestDteIndex, effectiveIvAndDelta, type OptionType } from "@/lib/options-math";
-import { unreliableIvFlag } from "@/lib/flags";
 import { atmImpliedVolatility, historicalVolatility, rollingHistoricalVolatility, volatilitySkew, type SkewChainContract, type VolatilitySkewResult } from "@/lib/volatility";
 import { expectedMove, strikeCushion, cushionScore, momentumBufferMultiplier } from "@/lib/expected-move";
 import { scoreTickerLevel, combineWithStrikeCushion, type TradeDirection } from "@/lib/entry-score";
@@ -124,10 +123,27 @@ async function computeTickerRanking(
     const dtes = chain.expirations.map((e) => daysToExpiration(e.expirationDate));
     const frontMonthIndex = findClosestDteIndex(dtes, 37);
     const frontMonth = chain.expirations[frontMonthIndex];
+    const frontMonthDte = dtes[frontMonthIndex];
+
+    // Same market-hours-aware effective-IV solving the per-strike scoring
+    // below already uses (lib/options-math.ts's effectiveIvAndDelta) --
+    // a bare live-bid/ask-only filter here would zero out every contract
+    // (and this whole component) whenever the market's closed.
+    const toEffectiveIvContract = (contract: CallOrPut, optionType: OptionType) => {
+      const { effectiveIv, ivUnreliable } = effectiveIvAndDelta(
+        contract,
+        optionType,
+        underlyingPrice,
+        frontMonthDte,
+        chain.marketState
+      );
+      return { strike: contract.strike, impliedVolatility: ivUnreliable ? undefined : effectiveIv ?? undefined };
+    };
+
     const currentIv = atmImpliedVolatility({
       underlyingPrice,
-      calls: frontMonth.calls.filter((c) => !unreliableIvFlag(c)),
-      puts: frontMonth.puts.filter((p) => !unreliableIvFlag(p)),
+      calls: frontMonth.calls.map((c) => toEffectiveIvContract(c, "call")),
+      puts: frontMonth.puts.map((p) => toEffectiveIvContract(p, "put")),
     });
 
     const historicalValues = (ivHistory.data ?? [])

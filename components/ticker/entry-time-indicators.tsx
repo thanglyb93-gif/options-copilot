@@ -20,7 +20,7 @@ import { guidanceIndicatorById } from "@/lib/guidance-content";
 import { ImportanceBadge } from "@/components/shared/importance-badge";
 import { IndicatorLabel, CautionLabel } from "@/components/shared/indicator-label";
 import { EntryScorePanel } from "./entry-score-panel";
-import type { StrikeSelection } from "./strike-selector";
+import type { StrikeSelection, StrikeContext } from "./strike-selector";
 
 function capitalize(text: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
@@ -66,6 +66,7 @@ export function EntryTimeIndicators({
   putScore,
   callScore,
   selection,
+  strikeContext,
   options,
   quote,
   maxPain,
@@ -73,6 +74,7 @@ export function EntryTimeIndicators({
   putScore: FetchState<EntryScoreResponse>;
   callScore: FetchState<EntryScoreResponse>;
   selection: StrikeSelection | null;
+  strikeContext: StrikeContext | null;
   options: OptionsResponse;
   quote: QuoteResponse;
   maxPain: MaxPainResponse | null;
@@ -98,7 +100,7 @@ export function EntryTimeIndicators({
           title="Core"
           subtitle="The Entry Score and its five components -- directly drives the SELL/DON'T SELL recommendation."
         />
-        <EntryScorePanel putScore={putScore} callScore={callScore} selection={selection} />
+        <EntryScorePanel putScore={putScore} callScore={callScore} strikeContext={strikeContext} />
       </div>
 
       {/* SUPPORTING --------------------------------------------------- */}

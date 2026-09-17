@@ -1,12 +1,14 @@
 import { NextResponse } from "next/server";
+import type { CallOrPut } from "yahoo-finance2/modules/options";
 import {
   fetchHistoricalCloses,
   fetchQuote,
   fetchTargetExpirationChain,
   fetchNearestExpirationChain,
+  daysToExpiration,
 } from "@/lib/yahoo";
 import { getSupabaseRouteClient } from "@/lib/supabase";
-import { unreliableIvFlag } from "@/lib/flags";
+import { effectiveIvAndDelta, type OptionType } from "@/lib/options-math";
 import { atmImpliedVolatility, hvPercentileRank } from "@/lib/volatility";
 import { scoreIvComponent, IV_HISTORY_MIN_ROWS } from "@/lib/entry-score";
 import { buildStrikeRows, calculateMaxPain, putCallRatio } from "@/lib/max-pain";
@@ -42,12 +44,27 @@ export async function GET(
       fetchHistoricalCloses(ticker, 300),
     ]);
 
+    // Market-hours-aware effective-IV solving (lib/options-math.ts's
+    // effectiveIvAndDelta), same as the ticker page's own IV component --
+    // a bare live-bid/ask-only filter would zero out every contract (and
+    // this card's whole IV read) whenever the market's closed.
+    const targetDte = daysToExpiration(targetChain.expirationDate);
+    const toEffectiveIvContract = (contract: CallOrPut, optionType: OptionType) => {
+      const { effectiveIv, ivUnreliable } = effectiveIvAndDelta(
+        contract,
+        optionType,
+        targetChain.underlyingPrice,
+        targetDte,
+        targetChain.marketState
+      );
+      return { strike: contract.strike, impliedVolatility: ivUnreliable ? undefined : effectiveIv ?? undefined };
+    };
     const currentIv =
       targetChain.underlyingPrice != null
         ? atmImpliedVolatility({
             underlyingPrice: targetChain.underlyingPrice,
-            calls: targetChain.calls.filter((c) => !unreliableIvFlag(c)),
-            puts: targetChain.puts.filter((p) => !unreliableIvFlag(p)),
+            calls: targetChain.calls.map((c) => toEffectiveIvContract(c, "call")),
+            puts: targetChain.puts.map((p) => toEffectiveIvContract(p, "put")),
           })
         : null;
 
